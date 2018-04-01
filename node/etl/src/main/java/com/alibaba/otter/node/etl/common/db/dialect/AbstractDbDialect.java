@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.exception.NestableRuntimeException;
 import org.apache.ddlutils.model.Table;
@@ -70,7 +71,7 @@ public abstract class AbstractDbDialect implements DbDialect {
 
         // 初始化一些数据
         jdbcTemplate.execute(new ConnectionCallback() {
-
+            @Override
             public Object doInConnection(Connection c) throws SQLException, DataAccessException {
                 DatabaseMetaData meta = c.getMetaData();
                 databaseName = meta.getDatabaseProductName();
@@ -82,6 +83,12 @@ public abstract class AbstractDbDialect implements DbDialect {
         });
 
         initTables(jdbcTemplate);
+    }
+
+    // TODO: 2018/3/31 depu_lai
+    public AbstractDbDialect(final JestTemplate jestTemplate, LobHandler lobHandler) {
+        this.lobHandler = lobHandler;
+        initTables(jestTemplate);
     }
 
     public AbstractDbDialect(JdbcTemplate jdbcTemplate, LobHandler lobHandler, String name, int majorVersion,
@@ -100,6 +107,7 @@ public abstract class AbstractDbDialect implements DbDialect {
         initTables(jdbcTemplate);
     }
 
+    @Override
     public Table findTable(String schema, String table, boolean useCache) {
         List<String> key = Arrays.asList(schema, table);
         if (useCache == false) {
@@ -108,11 +116,11 @@ public abstract class AbstractDbDialect implements DbDialect {
 
         return tables.get(key);
     }
-
+    @Override
     public Table findTable(String schema, String table) {
         return findTable(schema, table, true);
     }
-
+    @Override
     public void reloadTable(String schema, String table) {
         if (StringUtils.isNotEmpty(table)) {
             tables.remove(Arrays.asList(schema, table));
@@ -121,11 +129,11 @@ public abstract class AbstractDbDialect implements DbDialect {
             tables.clear();
         }
     }
-
+    @Override
     public String getName() {
         return databaseName;
     }
-
+    @Override
     public int getMajorVersion() {
         return databaseMajorVersion;
     }
@@ -134,62 +142,74 @@ public abstract class AbstractDbDialect implements DbDialect {
     public int getMinorVersion() {
         return databaseMinorVersion;
     }
-
+    @Override
     public String getVersion() {
         return databaseMajorVersion + "." + databaseMinorVersion;
     }
-
+    @Override
     public LobHandler getLobHandler() {
         return lobHandler;
     }
-
+    @Override
     public JdbcTemplate getJdbcTemplate() {
         return jdbcTemplate;
     }
-
+    @Override
     public TransactionTemplate getTransactionTemplate() {
         return transactionTemplate;
     }
+//    @Override
+//    public SqlTemplate getSqlTemplate() {
+//        return sqlTemplate;
+//    }
 
-    public SqlTemplate getSqlTemplate() {
-        return sqlTemplate;
+    // TODO: 2018/3/31 depu_lai
+    @Override
+    public <T> T getSqlTemplate() {
+        return (T) sqlTemplate;
     }
-
+    @Override
     public boolean isDRDS() {
         return false;
     }
-
+    @Override
     public String getShardColumns(String schema, String table) {
         return null;
     }
-
+    @Override
     public void destory() {
     }
 
     // ================================ helper method ==========================
 
-    private void initTables(final JdbcTemplate jdbcTemplate) {
-        this.tables = OtterMigrateMap.makeSoftValueComputingMap(new Function<List<String>, Table>() {
+    private void initTables(final Object dbTemplate) {
+        // TODO: 2018/3/31 depu_lai
+        if (dbTemplate instanceof JestTemplate) {
 
-            public Table apply(List<String> names) {
-                Assert.isTrue(names.size() == 2);
-                try {
-                    beforeFindTable(jdbcTemplate, names.get(0), names.get(0), names.get(1));
-                    DdlUtilsFilter filter = getDdlUtilsFilter(jdbcTemplate, names.get(0), names.get(0), names.get(1));
-                    Table table = DdlUtils.findTable(jdbcTemplate, names.get(0), names.get(0), names.get(1), filter);
-                    afterFindTable(table, jdbcTemplate, names.get(0), names.get(0), names.get(1));
-                    if (table == null) {
-                        throw new NestableRuntimeException("no found table [" + names.get(0) + "." + names.get(1)
-                                                           + "] , pls check");
-                    } else {
-                        return table;
+        } else if (dbTemplate instanceof JdbcTemplate) {
+            final JdbcTemplate jdbcTemplate = (JdbcTemplate) dbTemplate;
+            this.tables = OtterMigrateMap.makeSoftValueComputingMap(new Function<List<String>, Table>() {
+                @Override
+                public Table apply(List<String> names) {
+                    Assert.isTrue(names.size() == 2);
+                    try {
+                        beforeFindTable(jdbcTemplate, names.get(0), names.get(0), names.get(1));
+                        DdlUtilsFilter filter = getDdlUtilsFilter(jdbcTemplate, names.get(0), names.get(0), names.get(1));
+                        Table table = DdlUtils.findTable(jdbcTemplate, names.get(0), names.get(0), names.get(1), filter);
+                        afterFindTable(table, jdbcTemplate, names.get(0), names.get(0), names.get(1));
+                        if (table == null) {
+                            throw new NestableRuntimeException("no found table [" + names.get(0) + "." + names.get(1)
+                                    + "] , pls check");
+                        } else {
+                            return table;
+                        }
+                    } catch (Exception e) {
+                        throw new NestableRuntimeException("find table [" + names.get(0) + "." + names.get(1) + "] error",
+                                e);
                     }
-                } catch (Exception e) {
-                    throw new NestableRuntimeException("find table [" + names.get(0) + "." + names.get(1) + "] error",
-                        e);
                 }
-            }
-        });
+            });
+        }
     }
 
     protected DdlUtilsFilter getDdlUtilsFilter(JdbcTemplate jdbcTemplate, String catalogName, String schemaName,

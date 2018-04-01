@@ -23,6 +23,7 @@ import java.util.Map;
 
 import javax.sql.DataSource;
 
+import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
 import org.apache.commons.dbcp.BasicDataSource;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
@@ -74,19 +75,24 @@ public class DBDataSourceService implements DataSourceService, DisposableBean {
      * key = pipelineId<br>
      * value = key(dataMediaSourceId)-value(DataSource)<br>
      */
-    private Map<Long, Map<DbMediaSource, DataSource>> dataSources;
+    private Map<Long, Map<DbMediaSource, Object>> dataSources;
 
     public DBDataSourceService(){
         // 构建第一层map
-        dataSources = OtterMigrateMap.makeComputingMap(new Function<Long, Map<DbMediaSource, DataSource>>() {
-
-            public Map<DbMediaSource, DataSource> apply(final Long pipelineId) {
+        dataSources = OtterMigrateMap.makeComputingMap(new Function<Long, Map<DbMediaSource, Object>>() {
+            @Override
+            public Map<DbMediaSource, Object> apply(final Long pipelineId) {
                 // 构建第二层map
-                return OtterMigrateMap.makeComputingMap(new Function<DbMediaSource, DataSource>() {
+                return OtterMigrateMap.makeComputingMap(new Function<DbMediaSource, Object>() {
 
-                    public DataSource apply(DbMediaSource dbMediaSource) {
+                    public Object apply(DbMediaSource dbMediaSource) {
 
                         // 扩展功能,可以自定义一些自己实现的 dataSource
+                        // TODO: 2018/3/31 depu_lai
+                        if (dbMediaSource.getType().isElasticSearch()) {
+                            return new JestTemplate(dbMediaSource);
+                        }
+
                         DataSource customDataSource = preCreate(pipelineId, dbMediaSource);
                         if (customDataSource != null) {
                             return customDataSource;
@@ -106,27 +112,34 @@ public class DBDataSourceService implements DataSourceService, DisposableBean {
 
     }
 
-    public DataSource getDataSource(long pipelineId, DataMediaSource dataMediaSource) {
+    @Override
+    public <T> T getDataSource(long pipelineId, DataMediaSource dataMediaSource) {
         Assert.notNull(dataMediaSource);
-        return dataSources.get(pipelineId).get(dataMediaSource);
+        return (T) dataSources.get(pipelineId).get(dataMediaSource);
     }
 
+    @Override
     public void destroy(Long pipelineId) {
-        Map<DbMediaSource, DataSource> sources = dataSources.remove(pipelineId);
+        Map<DbMediaSource, Object> sources = dataSources.remove(pipelineId);
         if (sources != null) {
-            for (DataSource source : sources.values()) {
-                try {
-                    // for filter to destroy custom datasource
-                    if (letHandlerDestroyIfSupport(pipelineId, source)) {
-                        continue;
-                    }
+            for (Object source : sources.values()) {
+                if (source instanceof DataSource) {
+                    try {
+                        // for filter to destroy custom datasource
+                        if (letHandlerDestroyIfSupport(pipelineId, (DataSource) source)) {
+                            continue;
+                        }
 
-                    // fallback for regular destroy
-                    // TODO need to integrate to handler
-                    BasicDataSource basicDataSource = (BasicDataSource) source;
-                    basicDataSource.close();
-                } catch (SQLException e) {
-                    logger.error("ERROR ## close the datasource has an error", e);
+                        // fallback for regular destroy
+                        // TODO need to integrate to handler
+                        BasicDataSource basicDataSource = (BasicDataSource) source;
+                        basicDataSource.close();
+                    } catch (SQLException e) {
+                        logger.error("ERROR ## close the datasource has an error", e);
+                    }
+                }else if(source instanceof JestTemplate){//数据源为ES
+                    //销毁jest客户端
+                    ((JestTemplate)source).close();
                 }
             }
 

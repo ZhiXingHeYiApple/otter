@@ -18,6 +18,7 @@ package com.alibaba.otter.node.etl.load.loader.db.interceptor.sql;
 
 import java.util.List;
 
+import com.alibaba.otter.node.etl.common.db.dialect.elasticsearch.ElasticSearchTemplate;
 import org.springframework.util.CollectionUtils;
 
 import com.alibaba.otter.node.etl.common.db.dialect.DbDialect;
@@ -45,6 +46,11 @@ public class SqlBuilderLoadInterceptor extends AbstractLoadInterceptor<DbLoadCon
         // 初步构建sql
         DbDialect dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
             (DbMediaSource) context.getDataMediaSource());
+        // TODO: depu_lai 2017/11/1
+        if (dbDialect.getSqlTemplate() instanceof ElasticSearchTemplate){
+            return false;
+        }
+
         SqlTemplate sqlTemplate = dbDialect.getSqlTemplate();
         EventType type = currentData.getEventType();
         String sql = null;

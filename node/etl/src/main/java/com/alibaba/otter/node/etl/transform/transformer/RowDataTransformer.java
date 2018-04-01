@@ -100,37 +100,64 @@ public class RowDataTransformer extends AbstractOtterTransformer<EventData, Even
                 translateColumnNames.put(columnPair.getSourceColumn().getName(), columnPair.getTargetColumn().getName());
             }
         }
-        // 准备一下table meta
-        DataMediaPair dataMediaPair = context.getDataMediaPair();
-        boolean useTableTransform = context.getPipeline().getParameters().getUseTableTransform();
-        boolean enableCompatibleMissColumn = context.getPipeline().getParameters().getEnableCompatibleMissColumn();
-        TableInfoHolder tableHolder = null;
-        if (useTableTransform || enableCompatibleMissColumn) {// 控制一下是否需要反查table
-                                                              // meta信息，如果同构数据库，完全没必要反查
-            // 获取目标库的表信息
-            DbDialect dbDialect = dbDialectFactory.getDbDialect(dataMediaPair.getPipelineId(),
-                (DbMediaSource) dataMedia.getSource());
+        
+        if (dataMedia.getSource().getType().isElasticSearch()){ // TODO: 2018/3/31 depu_lai 
+            DataMediaPair dataMediaPair = context.getDataMediaPair();
 
-            Table table = dbDialect.findTable(result.getSchemaName(), result.getTableName());
-            tableHolder = new TableInfoHolder(table, useTableTransform, enableCompatibleMissColumn);
+            // 处理column转化
+            List<EventColumn> otherColumns = translateColumns(result,
+                    data.getColumns(),
+                    context.getDataMediaPair(),
+                    translateColumnNames,
+                    null);
+            translatePkColumn(result,
+                    data.getKeys(),
+                    data.getOldKeys(),
+                    otherColumns,
+                    context.getDataMediaPair(),
+                    translateColumnNames,
+                    null);
+
+            result.setColumns(otherColumns);
+            return result;
+
+//            result.setOldKeys(data.getOldKeys());
+//            result.setKeys(data.getKeys());
+//            result.setColumns(data.getColumns());
+//            return result;
+        }else {
+            // 准备一下table meta
+            DataMediaPair dataMediaPair = context.getDataMediaPair();
+            boolean useTableTransform = context.getPipeline().getParameters().getUseTableTransform();
+            boolean enableCompatibleMissColumn = context.getPipeline().getParameters().getEnableCompatibleMissColumn();
+            TableInfoHolder tableHolder = null;
+            if (useTableTransform || enableCompatibleMissColumn) {// 控制一下是否需要反查table
+                // meta信息，如果同构数据库，完全没必要反查
+                // 获取目标库的表信息
+                DbDialect dbDialect = dbDialectFactory.getDbDialect(dataMediaPair.getPipelineId(),
+                        (DbMediaSource) dataMedia.getSource());
+
+                Table table = dbDialect.findTable(result.getSchemaName(), result.getTableName());
+                tableHolder = new TableInfoHolder(table, useTableTransform, enableCompatibleMissColumn);
+            }
+
+            // 处理column转化
+            List<EventColumn> otherColumns = translateColumns(result,
+                    data.getColumns(),
+                    context.getDataMediaPair(),
+                    translateColumnNames,
+                    tableHolder);
+            translatePkColumn(result,
+                    data.getKeys(),
+                    data.getOldKeys(),
+                    otherColumns,
+                    context.getDataMediaPair(),
+                    translateColumnNames,
+                    tableHolder);
+
+            result.setColumns(otherColumns);
+            return result;
         }
-
-        // 处理column转化
-        List<EventColumn> otherColumns = translateColumns(result,
-            data.getColumns(),
-            context.getDataMediaPair(),
-            translateColumnNames,
-            tableHolder);
-        translatePkColumn(result,
-            data.getKeys(),
-            data.getOldKeys(),
-            otherColumns,
-            context.getDataMediaPair(),
-            translateColumnNames,
-            tableHolder);
-
-        result.setColumns(otherColumns);
-        return result;
     }
 
     /**
@@ -273,6 +300,9 @@ public class RowDataTransformer extends AbstractOtterTransformer<EventData, Even
             } else if (type == EventType.DELETE) {
                 canColumnsNotExist &= !scolumn.isKey(); // 主键不允许不存在
             }
+
+            // TODO: 2018/3/31 depu_lai ES数据源时getTable可能为null
+            Column[] columnList = tableHolder.getTable()!=null?tableHolder.getTable().getColumns():new Column[0];
 
             Column matchDbColumn = getMatchColumn(tableHolder.getTable().getColumns(), tcolumn.getColumnName());
             // 匹配字段为空，可能源库发生过DDL操作，目标库重新载入一下meta信息

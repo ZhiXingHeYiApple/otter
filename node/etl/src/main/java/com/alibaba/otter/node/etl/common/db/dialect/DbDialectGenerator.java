@@ -16,6 +16,8 @@
 
 package com.alibaba.otter.node.etl.common.db.dialect;
 
+import com.alibaba.otter.node.etl.common.db.dialect.elasticsearch.ElasticSearchDialect;
+import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
 import org.apache.commons.lang.StringUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.lob.LobHandler;
@@ -37,6 +39,14 @@ public class DbDialectGenerator {
 
     protected LobHandler          defaultLobHandler;
     protected LobHandler          oracleLobHandler;
+
+    // TODO: 2018/3/31 depu_lai
+    /**非关系型数据库 ES*/
+    protected  DbDialect generate(JestTemplate jestTemplate, DataMediaType dataMediaType){
+        DbDialect dialect = null;
+        dialect = new ElasticSearchDialect(jestTemplate,defaultLobHandler);
+        return dialect;
+    }
 
     protected DbDialect generate(JdbcTemplate jdbcTemplate, String databaseName, String databaseNameVersion,
                                  int databaseMajorVersion, int databaseMinorVersion, DataMediaType dataMediaType) {

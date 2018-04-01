@@ -34,6 +34,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import com.alibaba.otter.node.etl.common.db.dialect.NoSqlTemplate;
+import com.alibaba.otter.node.etl.common.db.dialect.SqlTemplate;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.SystemUtils;
 import org.apache.ddlutils.model.Column;
@@ -440,36 +442,42 @@ public class DatabaseExtractor extends AbstractExtractor<DbBatch> implements Ini
 
         private List<String> select(DbDialect dbDialect, String schemaName, String tableName, TableData keyTableData,
                                     TableData columnTableData) throws InterruptedException {
-            String selectSql = dbDialect.getSqlTemplate().getSelectSql(schemaName,
-                tableName,
-                keyTableData.columnNames,
-                columnTableData.columnNames);
-            Exception exception = null;
-            for (int i = 0; i < retryTimes; i++) {
-                if (Thread.currentThread().isInterrupted()) {
-                    throw new InterruptedException(); // 退出
-                }
-
-                try {
-                    List<List<String>> result = dbDialect.getJdbcTemplate().query(selectSql,
-                        keyTableData.columnValues,
-                        keyTableData.columnTypes,
-                        new RowDataMapper(columnTableData.columnTypes));
-                    if (CollectionUtils.isEmpty(result)) {
-                        logger.warn("the mediaName = {}.{} not has rowdate in db \n {}", new Object[] { schemaName,
-                                tableName, dumpEventData(eventData, selectSql) });
-                        return null;
-                    } else {
-                        return result.get(0);
+            if (dbDialect.isNoSqlDB()){
+                /**非关系型数据库*/
+                //目前暂不支持ES作为源数据库
+                return null;
+            }else {
+                String selectSql = ((SqlTemplate)dbDialect.getSqlTemplate()).getSelectSql(schemaName,
+                        tableName,
+                        keyTableData.columnNames,
+                        columnTableData.columnNames);
+                Exception exception = null;
+                for (int i = 0; i < retryTimes; i++) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException(); // 退出
                     }
 
-                } catch (Exception e) {
-                    exception = e;
-                    logger.warn("retry [" + (i + 1) + "] failed", e);
-                }
-            }
+                    try {
+                        List<List<String>> result = dbDialect.getJdbcTemplate().query(selectSql,
+                                keyTableData.columnValues,
+                                keyTableData.columnTypes,
+                                new RowDataMapper(columnTableData.columnTypes));
+                        if (CollectionUtils.isEmpty(result)) {
+                            logger.warn("the mediaName = {}.{} not has rowdate in db \n {}", new Object[]{schemaName,
+                                    tableName, dumpEventData(eventData, selectSql)});
+                            return null;
+                        } else {
+                            return result.get(0);
+                        }
 
-            throw new RuntimeException("db extract failed , data:\n " + dumpEventData(eventData, selectSql), exception);
+                    } catch (Exception e) {
+                        exception = e;
+                        logger.warn("retry [" + (i + 1) + "] failed", e);
+                    }
+                }
+
+                throw new RuntimeException("db extract failed , data:\n " + dumpEventData(eventData, selectSql), exception);
+            }
         }
 
         /**

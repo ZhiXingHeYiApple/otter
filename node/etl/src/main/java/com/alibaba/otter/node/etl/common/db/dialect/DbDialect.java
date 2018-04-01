@@ -51,13 +51,16 @@ public interface DbDialect {
 
     public boolean isDRDS();
 
+    public boolean isNoSqlDB();
+
     public LobHandler getLobHandler();
 
     public JdbcTemplate getJdbcTemplate();
 
     public TransactionTemplate getTransactionTemplate();
 
-    public SqlTemplate getSqlTemplate();
+//    public SqlTemplate getSqlTemplate();
+    public <T> T getSqlTemplate();
 
     public Table findTable(String schema, String table);
 

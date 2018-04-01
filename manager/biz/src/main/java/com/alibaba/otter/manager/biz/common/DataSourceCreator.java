@@ -22,6 +22,7 @@ import java.util.List;
 
 import javax.sql.DataSource;
 
+import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
 import org.apache.commons.dbcp.BasicDataSource;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
@@ -58,6 +59,14 @@ public class DataSourceCreator implements DisposableBean {
     private int                     minEvictableIdleTimeMillis    = 30 * 60 * 1000;
 
     private List<DataSourceHanlder> dataSourceHandlers;
+
+    // TODO: 2018/3/31 depu_lai
+    public JestTemplate createJestTemplate(DataMediaSource dataMediaSource){
+        Assert.notNull(dataMediaSource);
+        DbMediaSource dbMediaSource = (DbMediaSource) dataMediaSource;
+        JestTemplate jestTemplate = new JestTemplate(dbMediaSource);
+        return jestTemplate;
+    }
 
     /**
      * 直接创建数据源，不做cache

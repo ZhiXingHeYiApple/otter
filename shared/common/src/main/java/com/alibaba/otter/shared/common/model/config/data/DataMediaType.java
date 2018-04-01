@@ -35,7 +35,9 @@ public enum DataMediaType {
     /** napoli */
     NAPOLI,
     /** diamond push for us */
-    DIAMOND_PUSH;
+    DIAMOND_PUSH,
+    /** elsaticsearch  */
+    ELASTICSEARCH;
 
     public boolean isMysql() {
         return this.equals(DataMediaType.MYSQL);
@@ -67,5 +69,13 @@ public enum DataMediaType {
 
     public boolean isDiamondPush() {
         return this.equals(DataMediaType.DIAMOND_PUSH);
+    }
+
+    // TODO: 2018/3/31 depu_lai
+    /**
+     * 扩展的nosql数据库
+     */
+    public boolean isElasticSearch() {
+        return this.equals(DataMediaType.ELASTICSEARCH);
     }
 }

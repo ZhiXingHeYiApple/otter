@@ -102,6 +102,11 @@ public class MysqlDialect extends AbstractDbDialect {
         return isDRDS;
     }
 
+    @Override
+    public boolean isNoSqlDB(){
+        return false;
+    }
+
     public String getShardColumns(String schema, String table) {
         if (isDRDS()) {
             return shardColumns.get(Arrays.asList(schema, table));

@@ -18,11 +18,14 @@ package com.alibaba.otter.manager.biz.config.datamedia.impl;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 import javax.sql.DataSource;
 
+import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
+import com.google.gson.JsonObject;
 import org.apache.ddlutils.model.Column;
 import org.apache.ddlutils.model.Table;
 import org.slf4j.Logger;
@@ -66,6 +69,19 @@ public class DataMediaServiceImpl implements DataMediaService {
     public List<String> queryColumnByMedia(DataMedia dataMedia) {
         List<String> columnResult = new ArrayList<String>();
         if (dataMedia.getSource().getType().isNapoli()) {
+            return columnResult;
+        }else if(dataMedia.getSource().getType().isElasticSearch()){// TODO: 2018/4/1 返回ES中索引内部type的字段列表
+            JestTemplate jestTemplate = dataSourceCreator.createJestTemplate(dataMedia.getSource());
+            String schemaName = dataMedia.getNamespaceMode().getSingleValue();
+            String tableName = dataMedia.getNameMode().getSingleValue();
+            JsonObject mappingJson = jestTemplate.getTableMapping(schemaName,tableName);
+            if (mappingJson!=null){
+                Iterator i$ = mappingJson.entrySet().iterator();
+                while(i$.hasNext()) {
+                    Map.Entry entry = (Map.Entry)i$.next();
+                    columnResult.add((String) entry.getKey());
+                }
+            }
             return columnResult;
         }
 
@@ -315,6 +331,9 @@ public class DataMediaServiceImpl implements DataMediaService {
                 dataMedia.setSource(dataMediaSource);
             } else if (dataMediaSource.getType().isNapoli() || dataMediaSource.getType().isMq()) {
                 dataMedia = JsonUtils.unmarshalFromString(dataMediaDo.getProperties(), MqDataMedia.class);
+                dataMedia.setSource(dataMediaSource);
+            }else if(dataMediaSource.getType().isElasticSearch()){// TODO: 2018/3/31 depu_lai 
+                dataMedia = JsonUtils.unmarshalFromString(dataMediaDo.getProperties(), DbDataMedia.class);
                 dataMedia.setSource(dataMediaSource);
             }
 

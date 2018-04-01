@@ -64,6 +64,8 @@ public class DataMediaAction extends AbstractAction {
             dataMedia.setSource((DbMediaSource) dataMediaSource);
         } else if (dataMediaSource.getType().isNapoli() || dataMediaSource.getType().isMq()) {
             dataMedia.setSource((MqMediaSource) dataMediaSource);
+        }else if(dataMediaSource.getType().isElasticSearch()){// TODO: 2018/3/31 depu_lai
+            dataMedia.setSource((DbMediaSource) dataMediaSource);
         }
 
         try {
@@ -99,6 +101,8 @@ public class DataMediaAction extends AbstractAction {
             dataMedia.setSource((DbMediaSource) dataMediaSource);
         } else if (dataMediaSource.getType().isNapoli() || dataMediaSource.getType().isMq()) {
             dataMedia.setSource((MqMediaSource) dataMediaSource);
+        }else if(dataMediaSource.getType().isElasticSearch()){ // TODO: 2018/3/31 depu_lai
+            dataMedia.setSource((DbMediaSource) dataMediaSource);
         }
 
         try {

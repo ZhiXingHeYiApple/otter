@@ -78,6 +78,15 @@ public class DataMediaSourceAction extends AbstractAction {
                 err.setMessage("invalidDataMediaSource");
                 return;
             }
+        }else if(dataMediaSource.getType().isElasticSearch()){// TODO: 2018/3/31 depu_lai
+            DbMediaSource dbMediaSource = new DbMediaSource();
+            dataMediaSourceInfo.setProperties(dbMediaSource);
+            try {
+                dataMediaSourceService.create(dbMediaSource);
+            } catch (RepeatConfigureException rce) {
+                err.setMessage("invalidDataMediaSource");
+                return;
+            }
         }
 
         nav.redirectTo(WebConstant.DATA_MEDIA_SOURCE_LIST_LINK);

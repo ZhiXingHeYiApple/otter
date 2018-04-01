@@ -222,6 +222,8 @@ public class DataMediaSourceServiceImpl implements DataMediaSourceService {
                 dataMediaSource = JsonUtils.unmarshalFromString(dataMediaSourceDo.getProperties(), DbMediaSource.class);
             } else if (dataMediaSourceDo.getType().isNapoli() || dataMediaSourceDo.getType().isMq()) {
                 dataMediaSource = JsonUtils.unmarshalFromString(dataMediaSourceDo.getProperties(), MqMediaSource.class);
+            }else if(dataMediaSourceDo.getType().isElasticSearch()){// TODO: 2018/3/31 depu_lai
+                dataMediaSource = JsonUtils.unmarshalFromString(dataMediaSourceDo.getProperties(), DbMediaSource.class);
             }
 
             dataMediaSource.setId(dataMediaSourceDo.getId());

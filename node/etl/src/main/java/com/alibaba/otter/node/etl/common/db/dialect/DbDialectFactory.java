@@ -25,6 +25,7 @@ import java.util.Set;
 
 import javax.sql.DataSource;
 
+import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -58,38 +59,46 @@ public class DbDialectFactory implements DisposableBean {
             public Map<DbMediaSource, DbDialect> apply(final Long pipelineId) {
                 // 构建第二层map
                 return MigrateMap.makeComputingMap(new Function<DbMediaSource, DbDialect>() {
-
+                    // TODO: 2018/3/31 depu_lai
+                    @Override
                     public DbDialect apply(final DbMediaSource source) {
-                        DataSource dataSource = dataSourceService.getDataSource(pipelineId, source);
-                        final JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
-                        return (DbDialect) jdbcTemplate.execute(new ConnectionCallback() {
+                        Object unknownSource = dataSourceService.getDataSource(pipelineId, source);
+                        if (unknownSource instanceof DataSource) {
+                            DataSource dataSource = (DataSource) unknownSource;
+                            final JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+                            return (DbDialect) jdbcTemplate.execute(new ConnectionCallback() {
 
-                            public Object doInConnection(Connection c) throws SQLException, DataAccessException {
-                                DatabaseMetaData meta = c.getMetaData();
-                                String databaseName = meta.getDatabaseProductName();
-                                String databaseVersion = meta.getDatabaseProductVersion();
-                                int databaseMajorVersion = meta.getDatabaseMajorVersion();
-                                int databaseMinorVersion = meta.getDatabaseMinorVersion();
-                                DbDialect dialect = dbDialectGenerator.generate(jdbcTemplate,
-                                    databaseName,
-                                    databaseVersion,
-                                    databaseMajorVersion,
-                                    databaseMinorVersion,
-                                    source.getType());
-                                if (dialect == null) {
-                                    throw new UnsupportedOperationException("no dialect for" + databaseName);
+                                public Object doInConnection(Connection c) throws SQLException, DataAccessException {
+                                    DatabaseMetaData meta = c.getMetaData();
+                                    String databaseName = meta.getDatabaseProductName();
+                                    String databaseVersion = meta.getDatabaseProductVersion();
+                                    int databaseMajorVersion = meta.getDatabaseMajorVersion();
+                                    int databaseMinorVersion = meta.getDatabaseMinorVersion();
+                                    DbDialect dialect = dbDialectGenerator.generate(jdbcTemplate,
+                                            databaseName,
+                                            databaseVersion,
+                                            databaseMajorVersion,
+                                            databaseMinorVersion,
+                                            source.getType());
+                                    if (dialect == null) {
+                                        throw new UnsupportedOperationException("no dialect for" + databaseName);
+                                    }
+
+                                    if (logger.isInfoEnabled()) {
+                                        logger.info(String.format("--- DATABASE: %s, SCHEMA: %s ---",
+                                                databaseName,
+                                                (dialect.getDefaultSchema() == null) ? dialect.getDefaultCatalog() : dialect.getDefaultSchema()));
+                                    }
+
+                                    return dialect;
                                 }
-
-                                if (logger.isInfoEnabled()) {
-                                    logger.info(String.format("--- DATABASE: %s, SCHEMA: %s ---",
-                                        databaseName,
-                                        (dialect.getDefaultSchema() == null) ? dialect.getDefaultCatalog() : dialect.getDefaultSchema()));
-                                }
-
-                                return dialect;
-                            }
-                        });
-
+                            });
+                        }else if(unknownSource instanceof JestTemplate){
+                            /**非关系型数据库*/
+                            //确定ES的dialect
+                            return dbDialectGenerator.generate((JestTemplate)unknownSource,source.getType());
+                        }
+                        return null;
                     }
                 });
             }
