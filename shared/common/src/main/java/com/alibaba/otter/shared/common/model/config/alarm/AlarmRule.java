@@ -149,7 +149,7 @@ public class AlarmRule implements Serializable {
     }
 
     public boolean isPaused() {
-        return pauseTime != null && new Date().before(pauseTime);
+        return pauseTime != null && new Date().after(pauseTime);
     }
 
     @Override

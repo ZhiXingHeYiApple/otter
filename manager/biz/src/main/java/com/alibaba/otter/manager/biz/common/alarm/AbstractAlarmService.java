@@ -43,6 +43,7 @@ public abstract class AbstractAlarmService implements AlarmService, Initializing
     private ExecutorService             executor;
     private int                         period = 150;                                                // milliseconds
 
+    @Override
     public void sendAlarm(AlarmMessage data) {
         try {
             if (!queue.offer(data, 2, TimeUnit.SECONDS)) {
@@ -68,10 +69,11 @@ public abstract class AbstractAlarmService implements AlarmService, Initializing
 
     protected abstract void doSend(AlarmMessage data) throws Exception;
 
+    @Override
     public void afterPropertiesSet() throws Exception {
         executor = Executors.newFixedThreadPool(1);
         executor.submit(new Runnable() {
-
+            @Override
             public void run() {
                 while (!Thread.currentThread().isInterrupted()) {
                     sendAlarmInternal();

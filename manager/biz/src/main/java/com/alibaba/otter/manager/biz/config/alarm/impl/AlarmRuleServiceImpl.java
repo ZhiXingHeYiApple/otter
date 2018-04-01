@@ -46,17 +46,20 @@ public class AlarmRuleServiceImpl implements AlarmRuleService {
     public static final String  TIMESTAMP_FORMAT = "yyyy-MM-dd HH:mm:ss";
     private AlarmRuleDAO        alarmRuleDao;
 
+    @Override
     public void create(AlarmRule alarmRule) {
         Assert.assertNotNull(alarmRule);
         alarmRuleDao.insert(modelToDo(alarmRule));
     }
 
+    @Override
     public void modify(AlarmRule alarmRule) {
         AlarmRuleDO alarmRuleDo = modelToDo(alarmRule);
         alarmRuleDao.update(alarmRuleDo);
 
     }
 
+    @Override
     public void remove(Long alarmRuleId) {
         alarmRuleDao.delete(alarmRuleId);
     }
@@ -80,29 +83,35 @@ public class AlarmRuleServiceImpl implements AlarmRuleService {
         alarmRuleDao.update(alarmRuleDo);
     }
 
+    @Override
     public void enableMonitor(Long alarmRuleId) {
         switchAlarmRuleStatus(alarmRuleId, AlarmRuleStatus.ENABLE, null);
     }
 
+    @Override
     public void disableMonitor(Long alarmRuleId) {
         switchAlarmRuleStatus(alarmRuleId, AlarmRuleStatus.DISABLE, null);
     }
 
+    @Override
     public void disableMonitor(Long alarmRuleId, String pauseTime) {
-        switchAlarmRuleStatus(alarmRuleId, AlarmRuleStatus.ENABLE, pauseTime);
+        switchAlarmRuleStatus(alarmRuleId, AlarmRuleStatus.DISABLE, pauseTime);
     }
 
+    @Override
     public AlarmRule getAlarmRuleById(Long AlarmRuleId) {
         Assert.assertNotNull(AlarmRuleId);
         return doToModel(alarmRuleDao.findById(AlarmRuleId));
     }
 
+    @Override
     public List<AlarmRule> getAllAlarmRules(AlarmRuleStatus status) {
         Assert.assertNotNull(status);
         List<AlarmRuleDO> alarmRuleDos = alarmRuleDao.listByStatus(status);
         return doToModel(alarmRuleDos);
     }
 
+    @Override
     public Map<Long, List<AlarmRule>> getAlarmRules(AlarmRuleStatus status) {
         Assert.assertNotNull(status);
         List<AlarmRule> alarmRules = getAllAlarmRules(status);
@@ -120,12 +129,14 @@ public class AlarmRuleServiceImpl implements AlarmRuleService {
         return result;
     }
 
+    @Override
     public List<AlarmRule> getAlarmRules(Long pipelineId) {
         Assert.assertNotNull(pipelineId);
         List<AlarmRuleDO> alarmRuleDos = alarmRuleDao.listByPipelineId(pipelineId);
         return doToModel(alarmRuleDos);
     }
 
+    @Override
     public List<AlarmRule> getAlarmRules(Long pipelineId, AlarmRuleStatus status) {
         Assert.assertNotNull(pipelineId);
         Assert.assertNotNull(status);
@@ -134,11 +145,13 @@ public class AlarmRuleServiceImpl implements AlarmRuleService {
         return doToModel(alarmRuleDos);
     }
 
+    @Override
     public List<AlarmRule> listAllAlarmRules(Map condition) {
         List<AlarmRule> alarmRules = doToModel(alarmRuleDao.listAllByPipeline(condition));
         return alarmRules;
     }
 
+    @Override
     public int getCount() {
         return alarmRuleDao.getCount();
     }

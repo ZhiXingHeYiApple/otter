@@ -29,8 +29,14 @@ public class SystemParameterDO implements Serializable {
     private static final long serialVersionUID = 9148286590254926037L;
     private Long              id;                                     // 唯一标示id
     private SystemParameter   value;                                  // 系统参数值
-    private Date              gmtCreate;                              // 创建时间
-    private Date              gmtModified;                            // 修改时间
+    /**
+     * 创建时间,数据库为 not null，必须得有默认值
+     */
+    private Date              gmtCreate = new Date();
+    /**
+     * 修改时间，数据库为 not null，必须得有默认值
+     */
+    private Date              gmtModified = new Date();
 
     public Long getId() {
         return id;

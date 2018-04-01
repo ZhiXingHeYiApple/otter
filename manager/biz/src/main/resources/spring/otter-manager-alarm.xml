@@ -26,9 +26,12 @@
 			</props>
 		</property>
 	</bean>
+	<bean id="yunpian" class="com.alibaba.otter.manager.biz.common.alarm.YunpianMessage">
+	</bean>
 
 	<bean id="alarmService" class="com.alibaba.otter.manager.biz.common.alarm.DefaultAlarmService">
 		<property name="mailSender" ref="mailSender" />
+		<property name="yunpianMessage" ref="yunpian"/>
 		<property name="username" value="${otter.manager.monitor.email.username}" />
 	</bean>
 </beans>
