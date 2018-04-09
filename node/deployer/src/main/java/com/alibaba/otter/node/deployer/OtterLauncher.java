@@ -36,7 +36,8 @@ public class OtterLauncher {
         // 启动dragoon client
         // startDragoon();
         // logger.info("INFO ## the dragoon is start now ......");
-        System.setProperty("nid", "1");
+        // TODO: depu lai 2018/4/4  not comment this line when debug, but when you package otter project, must comment this line
+        //System.setProperty("nid", "2");
         final OtterController controller = OtterContextLocator.getOtterController();
         controller.start();
         try {

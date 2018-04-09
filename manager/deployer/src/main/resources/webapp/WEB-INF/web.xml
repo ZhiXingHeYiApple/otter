@@ -13,9 +13,9 @@
 	</context-param>
 
 	<!-- depu_lai 该项目日志的开启开关 本地调试时可以开启该配置-->
-	<listener>
-		<listener-class>com.alibaba.citrus.logconfig.LogConfiguratorListener</listener-class>
-	</listener>
+	<!--<listener>-->
+		<!--<listener-class>com.alibaba.citrus.logconfig.LogConfiguratorListener</listener-class>-->
+	<!--</listener>-->
  
 	<listener>
 		<listener-class>com.alibaba.citrus.webx.context.WebxContextLoaderListener</listener-class>
