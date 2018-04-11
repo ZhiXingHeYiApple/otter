@@ -14,6 +14,7 @@ import io.searchbox.core.Bulk;
 import io.searchbox.core.BulkResult;
 import io.searchbox.core.ClearScroll;
 import io.searchbox.core.Delete;
+import io.searchbox.core.Get;
 import io.searchbox.core.Index;
 import io.searchbox.core.Search;
 import io.searchbox.core.SearchScroll;
@@ -28,6 +29,7 @@ import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -157,10 +159,14 @@ public class JestTemplate implements ElasticSearchDAO {
     }
 
     @Override
-    public JestResult updateDoc(String index, String type, String id, String partialDoc) {
+    public JestResult updateDoc(String index, String type, String id,String esParent, String partialDoc) {
         JestResult result = null;
         try {
-            result = this.jestClient.execute(new Update.Builder(partialDoc).index(index).type(type).id(id).build());
+            Update.Builder updateBuilder = new Update.Builder(partialDoc).index(index).type(type).id(id);
+            if (!StringUtils.isBlank(esParent)) {
+                updateBuilder.setParameter(Parameters.PARENT, esParent);
+            }
+            result = this.jestClient.execute(updateBuilder.build());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -266,6 +272,21 @@ public class JestTemplate implements ElasticSearchDAO {
             e.printStackTrace();
         }
         return false;
+    }
+
+    @Override
+    public JestResult getForDoc(String indexName, String typeName, String id, String routing){
+        Get.Builder getBuilder = new Get.Builder(indexName, id).type(typeName);
+        if (org.springframework.util.StringUtils.hasText(routing)) {
+            getBuilder.setParameter(Parameters.ROUTING, routing);
+        }
+        JestResult result = null;
+        try {
+            result = jestClient.execute(getBuilder.build());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return result;
     }
 
 }

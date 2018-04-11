@@ -597,18 +597,17 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                                     processStat(splitDatas.get(i), affects.get(i), true);
                                 }
                             } else {
-                                for (EventData event : splitDatas) {
-                                    int affect = 0;
-                                    if (event.getEventType().isDelete()) {// 删除单条记录
-                                        affect = nosqltemplate.deleteEventData(event);
-                                    } else if (event.getEventType().isUpdate()) {//更新单条记录
-                                        affect = nosqltemplate.updateEventData(event);
-                                    } else if (event.getEventType().isInsert()) {//插入单条记录
-                                        affect = nosqltemplate.insertEventData(event);
-                                    }
-                                    //更新统计信息
-                                    processStat(event, affect, false);
+                                final EventData event = splitDatas.get(0);// 直接取第一条
+                                int affect = 0;
+                                if (event.getEventType().isDelete()) {// 删除单条记录
+                                    affect = nosqltemplate.deleteEventData(event);
+                                } else if (event.getEventType().isUpdate()) {//更新单条记录
+                                    affect = nosqltemplate.updateEventData(event);
+                                } else if (event.getEventType().isInsert()) {//插入单条记录
+                                    affect = nosqltemplate.insertEventData(event);
                                 }
+                                //更新统计信息
+                                processStat(event, affect, false);
                             }
 
                         } else {//关系型数据库
@@ -680,7 +679,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
 
                         error = null;
                         exeResult = ExecuteResult.SUCCESS;
-                    } catch (DeadlockLoserDataAccessException ex) {
+                    } catch (DeadlockLoserDataAccessException ex) {// depu lai 关系型数据库死锁引起的异常，事务回滚
                         error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
                             DbLoadDumper.dumpEventDatas(splitDatas));
                         exeResult = ExecuteResult.RETRY;

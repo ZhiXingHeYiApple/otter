@@ -5,6 +5,7 @@ import io.searchbox.client.JestResult;
 import io.searchbox.core.BulkResult;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Created by depu_lai on 2017/10/29.
@@ -51,7 +52,7 @@ public interface ElasticSearchDAO {
      * @param partialDoc 部分文档内容
      * @return
      */
-    JestResult updateDoc(String index, String type, String id, String partialDoc);
+    JestResult updateDoc(String index, String type, String id,String esParent,String partialDoc);
 
     /**
      * 根据id删除文档
@@ -80,5 +81,8 @@ public interface ElasticSearchDAO {
      * @return
      */
     boolean clearType(String indexName, String typeName);
+
+
+    JestResult getForDoc(String indexName, String typeName, String id, String routing);
 
 }

@@ -37,13 +37,13 @@ public class OtterLauncher {
         // startDragoon();
         // logger.info("INFO ## the dragoon is start now ......");
         // TODO: depu lai 2018/4/4  not comment this line when debug, but when you package otter project, must comment this line
-        //System.setProperty("nid", "2");
+        System.setProperty("nid", "2");
         final OtterController controller = OtterContextLocator.getOtterController();
         controller.start();
         try {
             logger.info("INFO ## the otter server is running now ......");
             Runtime.getRuntime().addShutdownHook(new Thread() {
-
+                @Override
                 public void run() {
                     try {
                         logger.info("INFO ## stop the otter server");
