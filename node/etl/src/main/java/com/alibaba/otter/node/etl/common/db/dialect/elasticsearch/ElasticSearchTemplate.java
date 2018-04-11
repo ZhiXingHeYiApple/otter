@@ -121,7 +121,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                             String routing = StringUtils.isBlank(esParent) ? null : esParent;
                             // 根据老id找到文档(这里要同步等待查询结果，效率比较低)
                             JestResult searchResult = this.JestTemplate.getForDoc(indexName, typeName, oldDocId, routing);
-                            if (searchResult == null){// IO Exception
+                            if (searchResult == null) {// IO Exception
                                 //return bulkResult;
                                 throw new ConnClosedException();
                             }
@@ -229,6 +229,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
         docContent.putAll(keyMap);
         String esParent = (String) docContent.get("esParent");
         JestResult jestResult = this.JestTemplate.insertDoc(indexName, typeName, docId, esParent, JSON.toJSONString(docContent));
+        if (jestResult == null){
+            throw new ConnClosedException();
+        }
         return jestResult.isSucceeded() ? 1 : 0;
     }
 
@@ -266,12 +269,15 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                 docAsUpsertModel.setDocAsUpsert(true);
                 docAsUpsertModel.setDoc(docContent);
                 JestResult jestResult = this.JestTemplate.updateDoc(indexName, typeName, docId, esParent, JSON.toJSONString(docAsUpsertModel));
+                if (jestResult == null){
+                    throw new ConnClosedException();
+                }
                 return jestResult.isSucceeded() ? 1 : 0;
             } else {// 主键发生改变
                 String routing = StringUtils.isBlank(esParent) ? null : esParent;
                 // 根据老id找到文档(这里要同步等待查询结果，效率比较低)
                 JestResult searchResult = this.JestTemplate.getForDoc(indexName, typeName, oldDocId, routing);
-                if (searchResult == null){// IO Exception，让同步任务挂起，避免binlog event丢失
+                if (searchResult == null) {// IO Exception，让同步任务挂起，避免binlog event丢失
                     throw new ConnClosedException();
                 }
                 // 在极端情况下（如主从切换时），会有部分binlog event重复消费，存在一定概率导致这里根据老的主键是找不到文档的
@@ -281,14 +287,20 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                     oldDocSource.putAll(docContent);
                     // 重新索引合并后的文档
                     JestResult jestResult = JestTemplate.insertDoc(indexName, typeName, docId, esParent, JSON.toJSONString(oldDocSource));
+                    if (jestResult == null){
+                        throw new ConnClosedException();
+                    }
                     if (jestResult.isSucceeded()) {
                         // 删除老id对应的文档
                         JestResult deleteResult = JestTemplate.deleteDoc(indexName, typeName, oldDocId, esParent);
+                        if (deleteResult == null){
+                            throw new ConnClosedException();
+                        }
                         return deleteResult.isSucceeded() ? 1 : 0;
                     } else {
                         return 0;
                     }
-                }else{
+                } else {
                     // 当根据该binlog event中oldKey在ES中找不到该文档时，说明这条binlog之前被消费成功过了，直接返回1
                     return 1;
                 }
@@ -297,11 +309,20 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             if (oldDocId.equals("") || oldDocId.equals(docId)) {
                 //只更新非主键字段
                 JestResult jestResult = this.JestTemplate.insertDoc(indexName, typeName, docId, esParent, JSON.toJSONString(docContent));
+                if (jestResult == null){
+                    throw new ConnClosedException();
+                }
                 return jestResult.isSucceeded() ? 1 : 0;
             } else {
                 JestResult deleteResult = this.JestTemplate.deleteDoc(indexName, typeName, oldDocId, esParent);
+                if (deleteResult == null){
+                    throw new ConnClosedException();
+                }
                 if (deleteResult.isSucceeded()) {
                     JestResult jestResult = this.JestTemplate.insertDoc(indexName, typeName, docId, esParent, JSON.toJSONString(docContent));
+                    if (jestResult == null){
+                        throw new ConnClosedException();
+                    }
                     return jestResult.isSucceeded() ? 1 : 0;
                 }
                 return 0;
@@ -328,6 +349,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             }
         }
         JestResult jestResult = this.JestTemplate.deleteDoc(indexName, typeName, docId, esParent);
+        if (jestResult == null){
+            throw new ConnClosedException();
+        }
         return jestResult.isSucceeded() ? 1 : 0;
     }
 
