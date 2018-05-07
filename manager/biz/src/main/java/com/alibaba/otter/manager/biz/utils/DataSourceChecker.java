@@ -26,6 +26,7 @@ import java.util.List;
 
 import javax.sql.DataSource;
 
+import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
 import org.apache.commons.lang.StringUtils;
 import org.apache.ddlutils.model.Table;
 import org.slf4j.Logger;
@@ -74,6 +75,11 @@ public class DataSourceChecker {
     private static final String    ENCODE_FAIL        = "\u62b1\u6b49,\u5b57\u7b26\u96c6\u4e0d\u5339\u914d,\u5b9e\u9645\u6570\u636e\u5e93\u9ed8\u8ba4\u5b57\u7b26\u96c6\u4e3a:";
     // SELECT未成功
     private static final String    SELECT_FAIL        = "SELECT\u672a\u6210\u529f";
+
+    //抱歉,ES集群上没有对应的索引（schmea name）!
+    private static final String INDEX_FAIL = "\u62b1\u6b49,ES\u96c6\u7fa4\u4e0a\u6ca1\u6709\u5bf9\u5e94\u7684\u7d22\u5f15\uff08schmea name\uff09!";
+    //抱歉,ES集群上索引（schmea name）中没有对应的类型（table）!
+    private static final String TYPE_FAIL = "\u62b1\u6b49,ES\u96c6\u7fa4\u4e0a\u7d22\u5f15\uff08schmea name\uff09\u4e2d\u6ca1\u6709\u5bf9\u5e94\u7684\u7c7b\u578b\uff08table\uff09!";
 
     // DELETE未成功
     // private static final String DELETE_FAIL = "DELETE\u672a\u6210\u529f";
@@ -127,9 +133,22 @@ public class DataSourceChecker {
         // }
 
         DataSource dataSource = null;
+
         try {
 
             DbMediaSource dbMediaSource = new DbMediaSource();
+            /**check非关系型数据库*/
+            if (sourceType.equalsIgnoreCase("ELASTICSEARCH")) {
+                JestTemplate jestTemplate = new JestTemplate(dbMediaSource);
+                // 连接ES，查看集群状态
+                String status = jestTemplate.health();
+                if ("red".equals(status)) {
+                    return DATABASE_FAIL;
+                }
+                return DATABASE_SUCCESS;
+            }
+
+            /**check关系型数据库*/
             dbMediaSource.setUrl(url);
             dbMediaSource.setUsername(username);
             dbMediaSource.setPassword(password);
@@ -204,8 +223,25 @@ public class DataSourceChecker {
         Statement stmt = null;
         DataMediaSource source = dataMediaSourceService.findById(dataSourceId);
         DataSource dataSource = null;
+
         try {
             DbMediaSource dbMediaSource = (DbMediaSource) source;
+            /**check非关系型数据库*/
+            if (source.getType().isElasticSearch()) {
+                JestTemplate jestTemplate = new JestTemplate(dbMediaSource);
+                /**判断索引是否存在*/
+                String indexName = namespace.toLowerCase();
+                if (jestTemplate.aliasExist(indexName) || jestTemplate.indicesExist(indexName)) {
+                    if (jestTemplate.typeExist(indexName, name)) {
+                        return TABLE_SUCCESS;
+                    }
+                    return TYPE_FAIL;
+                } else {
+                    return INDEX_FAIL;
+                }
+            }
+
+            /**关系型数据库*/
             dataSource = dataSourceCreator.createDataSource(dbMediaSource);
             // conn = dataSource.getConnection();
             // if (null == conn) {
@@ -275,6 +311,22 @@ public class DataSourceChecker {
         try {
             DataMediaSource source = dataMediaSourceService.findById(dataSourceId);
             DbMediaSource dbMediaSource = (DbMediaSource) source;
+            /**check非关系型数据库*/
+            if (source.getType().isElasticSearch()) {
+                JestTemplate jestTemplate = new JestTemplate(dbMediaSource);
+                /**判断索引是否存在*/
+                String indexName = namespace.toLowerCase();
+                if (jestTemplate.aliasExist(indexName) || jestTemplate.indicesExist(indexName)) {
+                    if (jestTemplate.typeExist(indexName, name)) {
+                        return TABLE_SUCCESS;
+                    }
+                    return TYPE_FAIL;
+                } else {
+                    return INDEX_FAIL;
+                }
+            }
+
+            /**关系型数据库*/
             dataSource = dataSourceCreator.createDataSource(dbMediaSource);
             JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
 
