@@ -125,6 +125,32 @@ public class ColumnPairAction extends AbstractAction {
                 columnPairs.add(columnPair);
                 i++;
             }
+        }else if(targetMedia.getSource().getType().isElasticSearch()){ // TODO: 2018/5/7 depu lai 对于目的源为ES的字段映射处理
+            for (ColumnPair columnPair : columnPairsInDb) {
+                int i = 0;
+                for (String sourceColumnName : sourceColumnNames) {
+                    if (StringUtils.isEquals(columnPair.getSourceColumn().getName(), sourceColumnName)
+                            && StringUtils.isEquals(columnPair.getTargetColumn().getName(), targetColumnNames.get(i))) {
+                        columnPairsTemp.add(columnPair);
+                        columnPairsNameSource.add(sourceColumnName);
+                        columnPairsNameTarget.add(targetColumnNames.get(i));
+                    }
+                    i++;
+                }
+            }
+            // 要从数据库中删除这些columnPair
+            columnPairsInDb.removeAll(columnPairsTemp);
+            sourceColumnNames.removeAll(columnPairsNameSource);
+            targetColumnNames.removeAll(columnPairsNameTarget);
+            int i = 0;
+            for (String columnName : sourceColumnNames) {
+                ColumnPair columnPair = new ColumnPair();
+                columnPair.setSourceColumn(new Column(columnName));
+                columnPair.setTargetColumn(new Column(targetColumnNames.get(i)));
+                columnPair.setDataMediaPairId(dataMediaPairId);
+                columnPairs.add(columnPair);
+                i++;
+            }
         }
 
         for (ColumnPair columnPair : columnPairsInDb) {
