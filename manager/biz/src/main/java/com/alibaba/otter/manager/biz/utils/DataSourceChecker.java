@@ -133,10 +133,13 @@ public class DataSourceChecker {
         // }
 
         DataSource dataSource = null;
+        DbMediaSource dbMediaSource = new DbMediaSource();
+        dbMediaSource.setUrl(url);
+        dbMediaSource.setUsername(username);
+        dbMediaSource.setPassword(password);
+        dbMediaSource.setEncode(encode);
 
         try {
-
-            DbMediaSource dbMediaSource = new DbMediaSource();
             /**check非关系型数据库*/
             if (sourceType.equalsIgnoreCase("ELASTICSEARCH")) {
                 JestTemplate jestTemplate = new JestTemplate(dbMediaSource);
@@ -149,11 +152,6 @@ public class DataSourceChecker {
             }
 
             /**check关系型数据库*/
-            dbMediaSource.setUrl(url);
-            dbMediaSource.setUsername(username);
-            dbMediaSource.setPassword(password);
-            dbMediaSource.setEncode(encode);
-
             if (sourceType.equalsIgnoreCase("MYSQL")) {
                 dbMediaSource.setType(DataMediaType.MYSQL);
                 dbMediaSource.setDriver("com.mysql.jdbc.Driver");
