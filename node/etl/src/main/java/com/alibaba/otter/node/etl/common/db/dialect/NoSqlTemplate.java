@@ -1,6 +1,6 @@
 package com.alibaba.otter.node.etl.common.db.dialect;
 
-import com.alibaba.otter.node.etl.load.exception.ConnClosedException;
+import com.alibaba.otter.node.etl.load.exception.ElasticSearchLoadException;
 import com.alibaba.otter.shared.etl.model.EventData;
 
 import java.util.List;
@@ -15,7 +15,7 @@ public interface NoSqlTemplate {
      * @param events
      * @return 执行失败的记录集合返回, 失败原因消息保存在exeResult字段中
      */
-    List<Integer> batchEventDatas(List<EventData> events) throws ConnClosedException;
+    List<Integer> batchEventDatas(List<EventData> events) throws ElasticSearchLoadException;
 
     /**
      * 插入行数据
@@ -23,7 +23,7 @@ public interface NoSqlTemplate {
      * @param event
      * @return 记录返回, 失败原因消息保存在exeResult字段中
      */
-    int insertEventData(EventData event) throws ConnClosedException;
+    int insertEventData(EventData event) throws ElasticSearchLoadException;
 
     /**
      * 更新行数句
@@ -31,7 +31,7 @@ public interface NoSqlTemplate {
      * @param event
      * @return 记录返回, 失败原因消息保存在exeResult字段中
      */
-    int updateEventData(EventData event) throws ConnClosedException;
+    int updateEventData(EventData event) throws ElasticSearchLoadException;
 
     /**
      * 删除记录
@@ -39,7 +39,7 @@ public interface NoSqlTemplate {
      * @param event
      * @return 记录返回, 失败原因消息保存在exeResult字段中
      */
-    int deleteEventData(EventData event) throws ConnClosedException;
+    int deleteEventData(EventData event) throws ElasticSearchLoadException;
 
     /**
      * 建立表
@@ -47,7 +47,7 @@ public interface NoSqlTemplate {
      * @param event
      * @return
      */
-    EventData createTable(EventData event) throws ConnClosedException;
+    EventData createTable(EventData event) throws ElasticSearchLoadException;
 
     /**
      * 修改表
@@ -55,7 +55,7 @@ public interface NoSqlTemplate {
      * @param event
      * @return
      */
-    EventData alterTable(EventData event) throws ConnClosedException;
+    EventData alterTable(EventData event) throws ElasticSearchLoadException;
 
     /**
      * 删除表
@@ -63,7 +63,7 @@ public interface NoSqlTemplate {
      * @param event
      * @return
      */
-    boolean eraseTable(EventData event) throws ConnClosedException;
+    boolean eraseTable(EventData event) throws ElasticSearchLoadException;
 
     /**
      * 清空表
@@ -71,7 +71,7 @@ public interface NoSqlTemplate {
      * @param event
      * @return
      */
-    boolean truncateTable(EventData event) throws ConnClosedException;
+    boolean truncateTable(EventData event) throws ElasticSearchLoadException;
 
     /**
      * 改名表
@@ -79,5 +79,5 @@ public interface NoSqlTemplate {
      * @param event
      * @return
      */
-    EventData renameTable(EventData event) throws ConnClosedException;
+    EventData renameTable(EventData event) throws ElasticSearchLoadException;
 }

@@ -33,7 +33,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import com.alibaba.otter.node.etl.common.db.dialect.NoSqlTemplate;
-import com.alibaba.otter.node.etl.load.exception.ConnClosedException;
+import com.alibaba.otter.node.etl.load.exception.ElasticSearchLoadException;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.ddlutils.model.Column;
@@ -694,7 +694,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                         // exeResult = ExecuteResult.ERROR;
                         // }
                         exeResult = ExecuteResult.ERROR;
-                    } catch (ConnClosedException ex){// ES无法访问，IOException
+                    } catch (ElasticSearchLoadException ex){// ES无法访问，IOException或bulk partial failed
                         error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
                                 DbLoadDumper.dumpEventDatas(splitDatas));
                         exeResult = ExecuteResult.RETRY;// 进行重试

@@ -51,6 +51,7 @@ public class RowDataTransformer extends AbstractOtterTransformer<EventData, Even
 
     private DbDialectFactory dbDialectFactory;
 
+    @Override
     public EventData transform(EventData data, OtterTransformerContext context) {
         EventData result = new EventData();
         // 处理Table转化
@@ -304,7 +305,7 @@ public class RowDataTransformer extends AbstractOtterTransformer<EventData, Even
             // TODO: 2018/3/31 depu_lai ES数据源时getTable可能为null
             Column[] columnList = tableHolder.getTable()!=null?tableHolder.getTable().getColumns():new Column[0];
 
-            Column matchDbColumn = getMatchColumn(tableHolder.getTable().getColumns(), tcolumn.getColumnName());
+            Column matchDbColumn = getMatchColumn(columnList, tcolumn.getColumnName());
             // 匹配字段为空，可能源库发生过DDL操作，目标库重新载入一下meta信息
             if (matchDbColumn == null) { // 尝试reload一下table meta
                 // 获取目标库的表信息
