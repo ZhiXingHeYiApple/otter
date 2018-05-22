@@ -83,7 +83,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                 keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
             }
             // SHA-1得到唯一ID
-            if (docId.endsWith("#")){
+            if (eventData.getKeys().size() == 1) {// 单个主键无需hash处理
+                docId = docId.substring(0, docId.length() - 1);
+            } else if (eventData.getKeys().size() > 1) {
                 docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
             }
             //文档的内容
@@ -114,7 +116,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                         oldDocId += "#";
                     }
                     // SHA-1得到唯一ID
-                    if (oldDocId.endsWith("#")){
+                    if (eventData.getOldKeys().size() == 1) {
+                        oldDocId = oldDocId.substring(0, oldDocId.length() - 1);
+                    } else if (eventData.getOldKeys().size() > 1) {
                         oldDocId = encode(ALGORITHM, oldDocId.substring(0, oldDocId.length() - 1));
                     }
                     docContent.putAll(keyMap);
@@ -241,7 +245,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
         }
         // SHA-1得到唯一ID
-        if (docId.endsWith("#")){
+        if (event.getKeys().size() == 1) {
+            docId = docId.substring(0, docId.length() - 1);
+        } else if (event.getKeys().size() > 1) {
             docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
         }
         //文档的内容
@@ -275,7 +281,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             oldDocId += "#";
         }
         // SHA-1得到唯一ID
-        if (oldDocId.endsWith("#")){
+        if (event.getOldKeys().size() == 1) {
+            oldDocId = oldDocId.substring(0, oldDocId.length() - 1);
+        } else if (event.getOldKeys().size() > 1) {
             oldDocId = encode(ALGORITHM, oldDocId.substring(0, oldDocId.length() - 1));
         }
         String docId = "";
@@ -287,7 +295,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
         }
         // SHA-1得到唯一ID
-        if (docId.endsWith("#")){
+        if (event.getKeys().size() == 1) {
+            docId = docId.substring(0, docId.length() - 1);
+        } else if (event.getKeys().size() > 1) {
             docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
         }
         //文档的内容
@@ -396,7 +406,9 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
         }
         // SHA-1得到唯一ID
-        if (docId.endsWith("#")){
+        if (event.getKeys().size() == 1) {
+            docId = docId.substring(0, docId.length() - 1);
+        } else if (event.getKeys().size() > 1) {
             docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
         }
         String esParent = null;

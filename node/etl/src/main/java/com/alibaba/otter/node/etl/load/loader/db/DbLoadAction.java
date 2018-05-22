@@ -85,26 +85,26 @@ import com.alibaba.otter.shared.etl.model.RowBatch;
 
 /**
  * 数据库load的执行入口
- * 
+ *
  * @author jianghang 2011-10-31 下午03:17:43
  * @version 4.0.0
  */
 public class DbLoadAction implements InitializingBean, DisposableBean {
 
-    private static final Logger logger             = LoggerFactory.getLogger(DbLoadAction.class);
-    private static final String WORKER_NAME        = "DbLoadAction";
+    private static final Logger logger = LoggerFactory.getLogger(DbLoadAction.class);
+    private static final String WORKER_NAME = "DbLoadAction";
     private static final String WORKER_NAME_FORMAT = "pipelineId = %s , pipelineName = %s , " + WORKER_NAME;
-    private static final int    DEFAULT_POOL_SIZE  = 5;
-    private int                 poolSize           = DEFAULT_POOL_SIZE;
-    private int                 retry              = 3;
-    private int                 retryWait          = 3000;
-    private LoadInterceptor     interceptor;
-    private ExecutorService     executor;
-    private DbDialectFactory    dbDialectFactory;
+    private static final int DEFAULT_POOL_SIZE = 5;
+    private int poolSize = DEFAULT_POOL_SIZE;
+    private int retry = 3;
+    private int retryWait = 3000;
+    private LoadInterceptor interceptor;
+    private ExecutorService executor;
+    private DbDialectFactory dbDialectFactory;
     private ConfigClientService configClientService;
-    private int                 batchSize          = 50;
-    private boolean             useBatch           = true;
-    private LoadStatsTracker    loadStatsTracker;
+    private int batchSize = 50;
+    private boolean useBatch = true;
+    private LoadStatsTracker loadStatsTracker;
 
     /**
      * 返回结果为已处理成功的记录
@@ -127,7 +127,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
             // 因为所有的数据在DbBatchLoader已按照DateMediaSource进行归好类，不同数据源介质会有不同的DbLoadAction进行处理
             // 设置media source时，只需要取第一节点的source即可
             context.setDataMediaSource(ConfigHelper.findDataMedia(context.getPipeline(), datas.get(0).getTableId())
-                .getSource());
+                    .getSource());
             interceptor.prepare(context);
             // 执行重复录入数据过滤
             datas = context.getPrepareDatas();
@@ -137,7 +137,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                 // TODO: 2018/3/31 depu_lai
                 if (context.getDataMediaSource().getType().isElasticSearch()) {//ES不支持DDL同步
 
-                }else{// 只有关系型数据库才支持ddl特性
+                } else {// 只有关系型数据库才支持ddl特性
                     doDdl(context, datas);
                 }
 
@@ -195,7 +195,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
 
     /**
      * 分析整个数据，将datas划分为多个批次. ddl sql前的DML并发执行，然后串行执行ddl后，再并发执行DML
-     * 
+     *
      * @return
      */
     private boolean isDdlDatas(List<EventData> eventDatas) {
@@ -204,7 +204,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
             result |= eventData.getEventType().isDdl();
             if (result && !eventData.getEventType().isDdl()) {
                 throw new LoadException("ddl/dml can't be in one batch, it's may be a bug , pls submit issues.",
-                    DbLoadDumper.dumpEventDatas(eventDatas));
+                        DbLoadDumper.dumpEventDatas(eventDatas));
             }
         }
 
@@ -355,7 +355,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
 
     /**
      * 执行ddl的调用，处理逻辑比较简单: 串行调用
-     * 
+     *
      * @param context
      * @param eventDatas
      */
@@ -363,7 +363,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
         for (final EventData data : eventDatas) {
             DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), data.getTableId());
             final DbDialect dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
-                (DbMediaSource) dataMedia.getSource());
+                    (DbMediaSource) dataMedia.getSource());
             Boolean skipDdlException = context.getPipeline().getParameters().getSkipDdlException();
             try {
                 Boolean result = dbDialect.getJdbcTemplate().execute(new StatementCallback<Boolean>() {
@@ -457,14 +457,14 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                         if (ex != null) {
                             // do skip
                             logger.warn("skip exception for data : {} , caused by {}",
-                                retryEventData,
-                                ExceptionUtils.getFullStackTrace(ex));
+                                    retryEventData,
+                                    ExceptionUtils.getFullStackTrace(ex));
                         }
                     } catch (Exception ex) {
                         // do skip
                         logger.warn("skip exception for data : {} , caused by {}",
-                            retryEventData,
-                            ExceptionUtils.getFullStackTrace(ex));
+                                retryEventData,
+                                ExceptionUtils.getFullStackTrace(ex));
                     }
                 }
             } else {
@@ -510,12 +510,12 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
 
     public void afterPropertiesSet() throws Exception {
         executor = new ThreadPoolExecutor(poolSize,
-            poolSize,
-            0L,
-            TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue(poolSize * 4),
-            new NamedThreadFactory(WORKER_NAME),
-            new ThreadPoolExecutor.CallerRunsPolicy());
+                poolSize,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue(poolSize * 4),
+                new NamedThreadFactory(WORKER_NAME),
+                new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
     public void destroy() throws Exception {
@@ -528,16 +528,16 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
 
     class DbLoadWorker implements Callable<Exception> {
 
-        private DbLoadContext   context;
-        private DbDialect       dbDialect;
+        private DbLoadContext context;
+        private DbDialect dbDialect;
         private List<EventData> datas;
-        private boolean         canBatch;
-        private List<EventData> allFailedDatas   = new ArrayList<EventData>();
+        private boolean canBatch;
+        private List<EventData> allFailedDatas = new ArrayList<EventData>();
         private List<EventData> allProcesedDatas = new ArrayList<EventData>();
-        private List<EventData> processedDatas   = new ArrayList<EventData>();
-        private List<EventData> failedDatas      = new ArrayList<EventData>();
+        private List<EventData> processedDatas = new ArrayList<EventData>();
+        private List<EventData> failedDatas = new ArrayList<EventData>();
 
-        public DbLoadWorker(DbLoadContext context, List<EventData> datas, boolean canBatch){
+        public DbLoadWorker(DbLoadContext context, List<EventData> datas, boolean canBatch) {
             this.context = context;
             this.datas = datas;
             this.canBatch = canBatch;
@@ -545,15 +545,19 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
             EventData data = datas.get(0); // eventData为同一数据库的记录，只取第一条即可
             DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), data.getTableId());
             dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
-                (DbMediaSource) dataMedia.getSource());
+                    (DbMediaSource) dataMedia.getSource());
+            // TODO: 2018/5/17 对于MySQL，batchSize=50太小了，ES的bulk请求大小通常设为1000~3000，请求大小控制在5MB左右
+            if (dbDialect.isNoSqlDB()) {
+                batchSize = 400;
+            }
 
         }
 
         public Exception call() throws Exception {
             try {
                 Thread.currentThread().setName(String.format(WORKER_NAME_FORMAT,
-                    context.getPipeline().getId(),
-                    context.getPipeline().getName()));
+                        context.getPipeline().getId(),
+                        context.getPipeline().getName()));
                 return doCall();
             } finally {
                 Thread.currentThread().setName(WORKER_NAME);
@@ -564,7 +568,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
             RuntimeException error = null;
             ExecuteResult exeResult = null;
             int index = 0;// 记录下处理成功的记录下标
-            for (; index < datas.size();) {
+            for (; index < datas.size(); ) {
                 // 处理数据切分
                 final List<EventData> splitDatas = new ArrayList<EventData>();
                 if (useBatch && canBatch) {
@@ -682,11 +686,11 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                         exeResult = ExecuteResult.SUCCESS;
                     } catch (DeadlockLoserDataAccessException ex) {// depu lai 关系型数据库死锁引起的异常，事务回滚
                         error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                            DbLoadDumper.dumpEventDatas(splitDatas));
+                                DbLoadDumper.dumpEventDatas(splitDatas));
                         exeResult = ExecuteResult.RETRY;
                     } catch (DataIntegrityViolationException ex) {
                         error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                            DbLoadDumper.dumpEventDatas(splitDatas));
+                                DbLoadDumper.dumpEventDatas(splitDatas));
                         // if (StringUtils.contains(ex.getMessage(),
                         // "ORA-00001")) {
                         // exeResult = ExecuteResult.RETRY;
@@ -694,17 +698,17 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                         // exeResult = ExecuteResult.ERROR;
                         // }
                         exeResult = ExecuteResult.ERROR;
-                    } catch (ElasticSearchLoadException ex){// ES无法访问，IOException或bulk partial failed
+                    } catch (ElasticSearchLoadException ex) {// ES无法访问，IOException或bulk partial failed
                         error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
                                 DbLoadDumper.dumpEventDatas(splitDatas));
                         exeResult = ExecuteResult.RETRY;// 进行重试
                     } catch (RuntimeException ex) {
                         error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                            DbLoadDumper.dumpEventDatas(splitDatas));
+                                DbLoadDumper.dumpEventDatas(splitDatas));
                         exeResult = ExecuteResult.ERROR;
                     } catch (Throwable ex) {
                         error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                            DbLoadDumper.dumpEventDatas(splitDatas));
+                                DbLoadDumper.dumpEventDatas(splitDatas));
                         exeResult = ExecuteResult.ERROR;
                     }
 
@@ -723,8 +727,8 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                         if (retryCount >= retry) {
                             processFailedDatas(index);// 重试已结束，添加出错记录并退出
                             throw new LoadException(String.format("execute [%s] retry %s times failed",
-                                context.getIdentity().toString(),
-                                retryCount), error);
+                                    context.getIdentity().toString(),
+                                    retryCount), error);
                         } else {
                             try {
                                 int wait = retryCount * retryWait;
@@ -801,22 +805,22 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                     isRequired = isRequiredMap.get(StringUtils.lowerCase(column.getColumnName()));
                     if (isRequired == null) {
                         throw new LoadException(String.format("column name %s is not found in Table[%s]",
-                            column.getColumnName(),
-                            table.toString()));
+                                column.getColumnName(),
+                                table.toString()));
                     }
                 }
 
                 Object param = null;
                 if (dbDialect instanceof MysqlDialect
-                    && (sqlType == Types.TIME || sqlType == Types.TIMESTAMP || sqlType == Types.DATE)) {
+                        && (sqlType == Types.TIME || sqlType == Types.TIMESTAMP || sqlType == Types.DATE)) {
                     // 解决mysql的0000-00-00 00:00:00问题，直接依赖mysql
                     // driver进行处理，如果转化为Timestamp会出错
                     param = column.getColumnValue();
                 } else {
                     param = SqlUtils.stringToSqlValue(column.getColumnValue(),
-                        sqlType,
-                        isRequired,
-                        dbDialect.isEmptyStringNulled());
+                            sqlType,
+                            isRequired,
+                            dbDialect.isEmptyStringNulled());
                 }
 
                 try {
@@ -855,7 +859,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                     }
                 } catch (SQLException ex) {
                     logger.error("## SetParam error , [pairId={}, sqltype={}, value={}]",
-                        new Object[] { data.getPairId(), sqlType, param });
+                            new Object[]{data.getPairId(), sqlType, param});
                     throw ex;
                 }
             }
