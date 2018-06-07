@@ -3,6 +3,7 @@ package com.alibaba.otter.node.etl.common.db.dialect.elasticsearch;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.otter.node.etl.common.db.dialect.NoSqlTemplate;
 import com.alibaba.otter.node.etl.load.exception.ElasticSearchLoadException;
+import com.alibaba.otter.node.etl.load.exception.LoadException;
 import com.alibaba.otter.shared.common.utils.jest.DocAsUpsertModel;
 import com.alibaba.otter.shared.common.utils.jest.JestTemplate;
 import com.alibaba.otter.shared.etl.model.EventColumn;
@@ -15,6 +16,8 @@ import io.searchbox.core.Index;
 import io.searchbox.core.Update;
 import io.searchbox.params.Parameters;
 import javafx.util.Pair;
+import org.apache.commons.collections.collection.SynchronizedCollection;
+import org.apache.commons.collections.list.SynchronizedList;
 import org.apache.commons.lang.StringUtils;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
@@ -22,29 +25,184 @@ import org.joda.time.format.DateTimeFormat;
 import org.joda.time.format.DateTimeFormatter;
 import org.joda.time.format.DateTimeFormatterBuilder;
 import org.joda.time.format.DateTimeParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.CollectionUtils;
 
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Created by depu_lai on 2017/10/27.
  */
 public class ElasticSearchTemplate implements NoSqlTemplate {
-    //    private static final Logger logger = LoggerFactory.getLogger(DbLoadAction.class);
-    private JestTemplate JestTemplate = null;
-    private DateTimeFormatter formatter;
 
-    private static final String ALGORITHM = "SHA1";    // "MD5";
-    private static final char[] HEX_DIGITS = {'0', '1', '2', '3', '4', '5',
-            '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    class EventDataTransformToBulkRequest implements Callable {
+        /**
+         * 无序完成，需要通过index重新确定位置
+         */
+        private int index;
+
+        /**
+         * 线程的输入参数，采用构造传参
+         */
+        private EventData eventData;
+
+        /**
+         * 用于update事件主键发生变更时进行缓存，方便后续删除操作
+         */
+        private List<Pair> sharedDeleteList;
+
+        /**
+         * 用于update事件处理时，反查ES确认老ID文档是否存在的ES客户端
+         */
+        private JestTemplate jestTemplate;
+
+        public EventDataTransformToBulkRequest(int index, EventData eventData, List<Pair> deleteList, JestTemplate jestTemplate) {
+            this.index = index;
+            this.eventData = eventData;
+            this.sharedDeleteList = deleteList;
+            this.jestTemplate = jestTemplate;
+        }
+
+        private BulkableAction toInsertRequest(EventData eventData) {
+            String indexName = eventData.getSchemaName();
+            String typeName = eventData.getTableName();
+            String docId = getDocId(eventData);
+            Map<String, Object> docContent = getDocContent(eventData);
+            String esParent = (String) docContent.get("esParent");
+            Index.Builder indexBuilder = new Index.Builder(docContent).index(indexName).type(typeName).id(docId);
+            if (!StringUtils.isBlank(esParent)) {
+                indexBuilder.setParameter(Parameters.PARENT, esParent);
+            }
+            return indexBuilder.build();
+        }
+
+        private BulkableAction toUpdateRequest(EventData eventData) {
+            String indexName = eventData.getSchemaName();
+            String typeName = eventData.getTableName();
+            String docId = getDocId(eventData);
+            String oldDocId = getOldDocId(eventData);
+            Map<String, Object> docContent = getDocContent(eventData);
+            String esParent = (String) docContent.get("esParent");
+            if (eventData.getSyncMode().isField()) {// 列模式
+                if (oldDocId.equals("") || oldDocId.equals(docId)) {// updte_upsert
+                    DocAsUpsertModel docAsUpsertModel = new DocAsUpsertModel();
+                    docAsUpsertModel.setDocAsUpsert(true);
+                    docAsUpsertModel.setDoc(docContent);
+                    Update.Builder updateBuilder = new Update.Builder(JSON.toJSONString(docAsUpsertModel)).index(indexName).type(typeName).id(docId);
+                    if (!StringUtils.isBlank(esParent)) {
+                        updateBuilder.setParameter(Parameters.PARENT, esParent);
+                    }
+                    return updateBuilder.build();
+                } else {// 先删除再update_upsert
+                    String routing = StringUtils.isBlank(esParent) ? null : esParent;
+                    // 根据老id找到文档(这里要同步等待查询结果，效率比较低)
+                    JestResult searchResult = this.jestTemplate.getForDoc(indexName, typeName, oldDocId, routing);
+                    if (searchResult == null) {// IO Exception
+                        //return bulkResult;
+                        throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
+                    }
+                    // 有响应结果的情形
+                    if (Boolean.valueOf(true).equals(searchResult.getValue("found"))) {
+                        Map<String, Object> oldDocSource = searchResult.getSourceAsObject(Map.class);
+                        // 新、老文档合并
+                        oldDocSource.putAll(docContent);
+                        // 缓存老id的文档，以便后续删除
+                        this.sharedDeleteList.set(this.index, new Pair(oldDocId, esParent));
+                        // 索引合并后的新文档
+                        Index.Builder indexBuilder = new Index.Builder(oldDocSource).index(indexName).type(typeName).id(docId);
+                        if (!StringUtils.isBlank(esParent)) {
+                            indexBuilder.setParameter(Parameters.PARENT, esParent);
+                        }
+                        return indexBuilder.build();
+                    } else {// ES中找不到老主键对应的文档
+                        DocAsUpsertModel docAsUpsertModel = new DocAsUpsertModel();
+                        docAsUpsertModel.setDocAsUpsert(true);
+                        docAsUpsertModel.setDoc(docContent);
+                        Update.Builder updateBuilder = new Update.Builder(JSON.toJSONString(docAsUpsertModel)).index(indexName).type(typeName).id(docId);
+                        if (!StringUtils.isBlank(esParent)) {
+                            updateBuilder.setParameter(Parameters.PARENT, esParent);
+                        }
+                        return updateBuilder.build();
+                    }
+                }
+            } else {// row模式
+                if (oldDocId.equals("") || oldDocId.equals(docId)) {
+                    //只更新非主键字段
+                    Index.Builder indexBuilder = new Index.Builder(docContent).index(indexName).type(typeName).id(docId);
+                    if (!StringUtils.isBlank(esParent)) {
+                        indexBuilder.setParameter(Parameters.PARENT, esParent);
+                    }
+                    return indexBuilder.build();
+                } else {
+                    // 缓存老id的文档，以便后续删除
+                    this.sharedDeleteList.set(index, new Pair(oldDocId, esParent));
+                    Index.Builder indexBuilder = new Index.Builder(docContent).index(indexName).type(typeName).id(docId);
+                    if (!StringUtils.isBlank(esParent)) {
+                        indexBuilder.setParameter(Parameters.PARENT, esParent);
+                    }
+                    return indexBuilder.build();
+                }
+            }
+        }
+
+        private BulkableAction toDeleteRequest(EventData eventData) {
+            String indexName = eventData.getSchemaName();
+            String typeName = eventData.getTableName();
+            String docId = getDocId(eventData);
+            Map<String, Object> docContent = getDocContent(eventData);
+            String esParent = (String) docContent.get("esParent");
+            Delete.Builder deleteBuilder = new Delete.Builder(docId).index(indexName).type(typeName);
+            if (!StringUtils.isBlank(esParent)) {
+                deleteBuilder.setParameter(Parameters.PARENT, esParent);
+            }
+            return deleteBuilder.build();
+        }
+
+        @Override
+        public Object call() throws Exception {
+            BulkableAction request = null;
+            switch (eventData.getEventType()) {
+                case INSERT:
+                    request = toInsertRequest(eventData);
+                    break;
+                case UPDATE:
+                    request = toUpdateRequest(eventData);
+                    break;
+                case DELETE:
+                    request = toDeleteRequest(eventData);
+                    break;
+            }
+            return new Pair<Integer, BulkableAction>(this.index, request);
+        }
+    }
+
+    private static final Logger logger = LoggerFactory.getLogger(ElasticSearchTemplate.class);
+    private JestTemplate jestTemplate = null;
+    private static DateTimeFormatter formatter;
+    // "MD5";
+    private static final String ALGORITHM = "SHA1";
+
+    // CachedThreadPool线程池在执行大量短生命周期的异步任务时（many short-lived asynchronous task），可以显著提高程序性能
+    private static ExecutorService executor = Executors.newCachedThreadPool();
 
     public ElasticSearchTemplate(JestTemplate jestTemplate) {
-        this.JestTemplate = jestTemplate;
+        this.jestTemplate = jestTemplate;
         DateTimeParser[] parsers = {
                 DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ").getParser(),
                 // timestamp和datetime类型
@@ -63,171 +221,38 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
 
     @Override
     public List<Integer> batchEventDatas(List<EventData> events) throws ElasticSearchLoadException {
-        List<Integer> bulkResult = new ArrayList<Integer>(
-                Collections.nCopies(events.size(), new Integer(0)));
-        //bulk操作
-        List<BulkableAction> actions = new ArrayList<BulkableAction>(events.size());
-        // 主键发生改变的部分文档更新需要删除老文档
-        Pair[] deleteCollecton = new Pair[events.size()];
-        for (int i = 0, len = events.size(); i < len; i++) {
-            EventData eventData = events.get(i);
-            String indexName = eventData.getSchemaName();
-            String typeName = eventData.getTableName();
-            //文档的ID
-            String docId = "";
-            Map<String, Object> keyMap = new HashMap<String, Object>(eventData.getKeys().size());
-            for (int j = 0, len3 = eventData.getKeys().size(); j < len3; j++) {
-                EventColumn eventColumn = eventData.getKeys().get(j);
-                docId += eventColumn.getColumnValue();
-                docId += "#";
-                keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
-            }
-            // SHA-1得到唯一ID
-            if (eventData.getKeys().size() == 1) {// 单个主键无需hash处理
-                docId = docId.substring(0, docId.length() - 1);
-            } else if (eventData.getKeys().size() > 1) {
-                docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
-            }
-            //文档的内容
-            final Map<String, Object> docContent = new HashMap<String, Object>();
-            for (int j = 0, len4 = eventData.getColumns().size(); j < len4; j++) {
-                EventColumn eventColumn = eventData.getColumns().get(j);
-                docContent.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
-            }
-            BulkableAction request = null;
-            String esParent = null;
-            switch (eventData.getEventType()) {
-                case INSERT: {
-                    docContent.putAll(keyMap);
-                    esParent = (String) docContent.get("esParent");
-                    Index.Builder indexBuilder = new Index.Builder(docContent).index(indexName).type(typeName).id(docId);
-                    if (!StringUtils.isBlank(esParent)) {
-                        indexBuilder.setParameter(Parameters.PARENT, esParent);
-                    }
-                    request = indexBuilder.build();
-                    break;
-                }
-                case UPDATE: {
-                    // update操作才会关注old 文档id
-                    String oldDocId = "";
-                    for (int j = 0, len2 = eventData.getOldKeys().size(); j < len2; j++) {
-                        EventColumn eventColumn = eventData.getOldKeys().get(j);
-                        oldDocId += eventColumn.getColumnValue();
-                        oldDocId += "#";
-                    }
-                    // SHA-1得到唯一ID
-                    if (eventData.getOldKeys().size() == 1) {
-                        oldDocId = oldDocId.substring(0, oldDocId.length() - 1);
-                    } else if (eventData.getOldKeys().size() > 1) {
-                        oldDocId = encode(ALGORITHM, oldDocId.substring(0, oldDocId.length() - 1));
-                    }
-                    docContent.putAll(keyMap);
-                    boolean existOldKeys = !CollectionUtils.isEmpty(eventData.getOldKeys());
-                    esParent = (String) docContent.get("esParent");
-                    if (eventData.getSyncMode().isField()) {// 列模式
-                        if (oldDocId.equals("") || oldDocId.equals(docId)) {// updte_upsert
-                            DocAsUpsertModel docAsUpsertModel = new DocAsUpsertModel();
-                            docAsUpsertModel.setDocAsUpsert(true);
-                            docAsUpsertModel.setDoc(docContent);
-                            Update.Builder updateBuilder = new Update.Builder(JSON.toJSONString(docAsUpsertModel)).index(indexName).type(typeName).id(docId);
-                            if (!StringUtils.isBlank(esParent)) {
-                                updateBuilder.setParameter(Parameters.PARENT, esParent);
-                            }
-                            request = updateBuilder.build();
-                        } else {// 先删除再update_upsert
-                            String routing = StringUtils.isBlank(esParent) ? null : esParent;
-                            // 根据老id找到文档(这里要同步等待查询结果，效率比较低)
-                            JestResult searchResult = this.JestTemplate.getForDoc(indexName, typeName, oldDocId, routing);
-                            if (searchResult == null) {// IO Exception
-                                //return bulkResult;
-                                throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
-                            }
-                            // 有响应结果的情形
-                            if (Boolean.valueOf(true).equals(searchResult.getValue("found"))) {
-                                Map<String, Object> oldDocSource = searchResult.getSourceAsObject(Map.class);
-                                // 新、老文档合并
-                                oldDocSource.putAll(docContent);
-                                // 缓存老id的文档，以便后续删除
-                                deleteCollecton[i] = new Pair(oldDocId, esParent);
-                                // 索引合并后的新文档
-                                Index.Builder indexBuilder = new Index.Builder(oldDocSource).index(indexName).type(typeName).id(docId);
-                                if (!StringUtils.isBlank(esParent)) {
-                                    indexBuilder.setParameter(Parameters.PARENT, esParent);
-                                }
-                                request = indexBuilder.build();
-                            } else {// ES中找不到老主键对应的文档
-                                DocAsUpsertModel docAsUpsertModel = new DocAsUpsertModel();
-                                docAsUpsertModel.setDocAsUpsert(true);
-                                docAsUpsertModel.setDoc(docContent);
-                                Update.Builder updateBuilder = new Update.Builder(JSON.toJSONString(docAsUpsertModel)).index(indexName).type(typeName).id(docId);
-                                if (!StringUtils.isBlank(esParent)) {
-                                    updateBuilder.setParameter(Parameters.PARENT, esParent);
-                                }
-                                request = updateBuilder.build();
-                            }
-                        }
-                    } else {// row模式
-                        if (oldDocId.equals("") || oldDocId.equals(docId)) {
-                            //只更新非主键字段
-                            Index.Builder indexBuilder = new Index.Builder(docContent).index(indexName).type(typeName).id(docId);
-                            if (!StringUtils.isBlank(esParent)) {
-                                indexBuilder.setParameter(Parameters.PARENT, esParent);
-                            }
-                            request = indexBuilder.build();
-                        } else {
-                            // 缓存老id的文档，以便后续删除
-                            deleteCollecton[i] = new Pair(oldDocId, esParent);
-                            Index.Builder indexBuilder = new Index.Builder(docContent).index(indexName).type(typeName).id(docId);
-                            if (!StringUtils.isBlank(esParent)) {
-                                indexBuilder.setParameter(Parameters.PARENT, esParent);
-                            }
-                            request = indexBuilder.build();
-                        }
-                    }
-                    break;
-                }
-                case DELETE: {
-                    docContent.putAll(keyMap);
-                    esParent = (String) docContent.get("esParent");
-                    Delete.Builder deleteBuilder = new Delete.Builder(docId).index(indexName).type(typeName);
-                    if (!StringUtils.isBlank(esParent)) {
-                        deleteBuilder.setParameter(Parameters.PARENT, esParent);
-                    }
-                    request = deleteBuilder.build();
-                    break;
-                }
-                default:
-            }
-            actions.add(request);
+        CompletionService<Pair<Integer, BulkableAction>> completionService = new ExecutorCompletionService<Pair<Integer, BulkableAction>>(executor);
+
+        // 主键发生改变的部分文档更新需要删除老文档，多线程共享的集合
+        List<Pair> deleteList = Collections.synchronizedList(Arrays.asList(new Pair[events.size()]));
+        // 异步任务数
+        int n = events.size();
+        long startTime = System.currentTimeMillis();
+        for (int i = 0, len = n; i < len; i++) {
+            completionService.submit(new EventDataTransformToBulkRequest(i, events.get(i), deleteList, this.jestTemplate));
         }
-        BulkResult result = this.JestTemplate.bulkOperationDoc(actions);
-        // bulk请求发生 IOException，如网络中断
-        if (result == null) {
-            return bulkResult;
+        // java6 线程池异步执行
+        int received = 0;
+        boolean errors = false;
+        // List<BulkableAction> actions = new ArrayList<BulkableAction>(events.size());
+        List<BulkableAction> actions = Arrays.asList(new BulkableAction[events.size()]);
+        while (received < n && !errors) {
+            try {
+                Future<Pair<Integer, BulkableAction>> resultFuture = completionService.take(); //blocks if none available
+                Pair<Integer, BulkableAction> requestPair = resultFuture.get();
+                BulkableAction request = requestPair.getValue();
+                actions.set(requestPair.getKey(), request);
+                received++;
+            } catch (Exception e) {
+                errors = true;
+                // log
+                logger.error("## EventDataTransformToBulkRequest error , [errorInfo={}]",
+                        new Object[]{e.getMessage()});
+                throw new ElasticSearchLoadException("EventDataTransformToBulkRequest error", e.getMessage());
+            }
         }
-        if (result.getFailedItems().size() > 0) {// 部分失败了
-            throw new ElasticSearchLoadException(JSON.toJSONString(result.getFailedItems()), "ES bulk partial fail.");
-        }
-        //结果处理
-        for (int i = 0, len = result.getItems().size(); i < len; i++) {
-            BulkResult.BulkResultItem itemResult = result.getItems().get(i);
-            if (StringUtils.isBlank(itemResult.error)) {//成功
-                if (deleteCollecton[i] != null) {// 业务上主键变更不可能很频繁；不能使用异步请求ES，效率较低
-                    String indexName = events.get(i).getSchemaName();
-                    String typeName = events.get(i).getTableName();
-                    JestResult deleteResult = JestTemplate.deleteDoc(indexName, typeName, (String) deleteCollecton[i].getKey(), (String) deleteCollecton[i].getValue());
-                    // 发生IO Exception时，响应结果deleteResult为null
-                    bulkResult.set(i, deleteResult != null && deleteResult.isSucceeded() ? 1 : 0);
-                } else {
-                    bulkResult.set(i, 1);
-                }
-            } /*else {//失败
-                // 打印错误日志，以便数据丢失时方便排查问题
-                logger.error("## Load ElasticSearch error , [operation={}, index={}, type={}, id={}, errorInfo={}]",
-                        new Object[] { itemResult.operation, itemResult.index, itemResult.type,itemResult.id,itemResult.error });
-                bulkResult.set(i, 0);
-            }*/
-        }
+        logger.info("EventDatas {} -> BulkRequests spend {} ms", events.size(), System.currentTimeMillis() - startTime);
+        List<Integer> bulkResult = bulkToElasticSearch(actions, events, deleteList);
         return bulkResult;
     }
 
@@ -235,31 +260,11 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
     public int insertEventData(EventData event) throws ElasticSearchLoadException {
         String indexName = event.getSchemaName();
         String typeName = event.getTableName();
-        //文档的ID
-        String docId = "";
-        Map<String, Object> keyMap = new HashMap<String, Object>(event.getKeys().size());
-        for (int j = 0, len3 = event.getKeys().size(); j < len3; j++) {
-            EventColumn eventColumn = event.getKeys().get(j);
-            docId += eventColumn.getColumnValue();
-            docId += "#";
-            keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
-        }
-        // SHA-1得到唯一ID
-        if (event.getKeys().size() == 1) {
-            docId = docId.substring(0, docId.length() - 1);
-        } else if (event.getKeys().size() > 1) {
-            docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
-        }
-        //文档的内容
-        Map<String, Object> docContent = new HashMap<String, Object>();
-        for (int j = 0, len4 = event.getColumns().size(); j < len4; j++) {
-            EventColumn eventColumn = event.getColumns().get(j);
-            docContent.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
-        }
-        docContent.putAll(keyMap);
+        String docId = getDocId(event);
+        Map<String, Object> docContent = getDocContent(event);
         String esParent = (String) docContent.get("esParent");
         String docStr = JSON.toJSONString(docContent);
-        JestResult jestResult = this.JestTemplate.insertDoc(indexName, typeName, docId, esParent, docStr);
+        JestResult jestResult = this.jestTemplate.insertDoc(indexName, typeName, docId, esParent, docStr);
         if (jestResult == null) {
             throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
         }
@@ -273,49 +278,17 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
     public int updateEventData(EventData event) throws ElasticSearchLoadException {
         String indexName = event.getSchemaName();
         String typeName = event.getTableName();
-        //文档的ID
-        String oldDocId = "";
-        for (int j = 0, len2 = event.getOldKeys().size(); j < len2; j++) {
-            EventColumn eventColumn = event.getOldKeys().get(j);
-            oldDocId += eventColumn.getColumnValue();
-            oldDocId += "#";
-        }
-        // SHA-1得到唯一ID
-        if (event.getOldKeys().size() == 1) {
-            oldDocId = oldDocId.substring(0, oldDocId.length() - 1);
-        } else if (event.getOldKeys().size() > 1) {
-            oldDocId = encode(ALGORITHM, oldDocId.substring(0, oldDocId.length() - 1));
-        }
-        String docId = "";
-        Map<String, Object> keyMap = new HashMap<String, Object>(event.getKeys().size());
-        for (int j = 0, len3 = event.getKeys().size(); j < len3; j++) {
-            EventColumn eventColumn = event.getKeys().get(j);
-            docId += eventColumn.getColumnValue();
-            docId += "#";
-            keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
-        }
-        // SHA-1得到唯一ID
-        if (event.getKeys().size() == 1) {
-            docId = docId.substring(0, docId.length() - 1);
-        } else if (event.getKeys().size() > 1) {
-            docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
-        }
-        //文档的内容
-        final Map<String, Object> docContent = new HashMap<String, Object>();
-        for (int j = 0, len4 = event.getColumns().size(); j < len4; j++) {
-            EventColumn eventColumn = event.getColumns().get(j);
-            docContent.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
-        }
-        docContent.putAll(keyMap);
+        String docId = getDocId(event);
+        String oldDocId = getOldDocId(event);
+        Map<String, Object> docContent = getDocContent(event);
         String esParent = (String) docContent.get("esParent");
-
         if (event.getSyncMode().isField()) {// 列模式
             if (oldDocId.equals("") || oldDocId.equals(docId)) {
                 DocAsUpsertModel docAsUpsertModel = new DocAsUpsertModel();
                 docAsUpsertModel.setDocAsUpsert(true);
                 docAsUpsertModel.setDoc(docContent);
                 String partialDocStr = JSON.toJSONString(docAsUpsertModel);
-                JestResult jestResult = this.JestTemplate.updateDoc(indexName, typeName, docId, esParent, partialDocStr);
+                JestResult jestResult = this.jestTemplate.updateDoc(indexName, typeName, docId, esParent, partialDocStr);
                 if (jestResult == null) {
                     throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
                 }
@@ -326,7 +299,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             } else {// 主键发生改变
                 String routing = StringUtils.isBlank(esParent) ? null : esParent;
                 // 根据老id找到文档(这里要同步等待查询结果，效率比较低)
-                JestResult searchResult = this.JestTemplate.getForDoc(indexName, typeName, oldDocId, routing);
+                JestResult searchResult = this.jestTemplate.getForDoc(indexName, typeName, oldDocId, routing);
                 if (searchResult == null) {// IO Exception，让同步任务挂起，避免binlog event丢失
                     throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
                 }
@@ -336,13 +309,13 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                     // 新、老文档合并
                     oldDocSource.putAll(docContent);
                     // 重新索引合并后的文档
-                    JestResult jestResult = JestTemplate.insertDoc(indexName, typeName, docId, esParent, JSON.toJSONString(oldDocSource));
+                    JestResult jestResult = jestTemplate.insertDoc(indexName, typeName, docId, esParent, JSON.toJSONString(oldDocSource));
                     if (jestResult == null) {
                         throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
                     }
                     if (jestResult.isSucceeded()) {
                         // 删除老id对应的文档
-                        JestResult deleteResult = JestTemplate.deleteDoc(indexName, typeName, oldDocId, esParent);
+                        JestResult deleteResult = jestTemplate.deleteDoc(indexName, typeName, oldDocId, esParent);
                         if (deleteResult == null) {
                             throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
                         }
@@ -362,7 +335,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             if (oldDocId.equals("") || oldDocId.equals(docId)) {
                 //只更新非主键字段
                 String partialDocStr = JSON.toJSONString(docContent);
-                JestResult jestResult = this.JestTemplate.insertDoc(indexName, typeName, docId, esParent, partialDocStr);
+                JestResult jestResult = this.jestTemplate.insertDoc(indexName, typeName, docId, esParent, partialDocStr);
                 if (jestResult == null) {
                     throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
                 }
@@ -371,13 +344,13 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                 }
                 return 1;
             } else {
-                JestResult deleteResult = this.JestTemplate.deleteDoc(indexName, typeName, oldDocId, esParent);
+                JestResult deleteResult = this.jestTemplate.deleteDoc(indexName, typeName, oldDocId, esParent);
                 if (deleteResult == null) {
                     throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
                 }
                 if (deleteResult.isSucceeded()) {
                     String partialDocStr = JSON.toJSONString(docContent);
-                    JestResult jestResult = this.JestTemplate.insertDoc(indexName, typeName, docId, esParent, partialDocStr);
+                    JestResult jestResult = this.jestTemplate.insertDoc(indexName, typeName, docId, esParent, partialDocStr);
                     if (jestResult == null) {
                         throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
                     }
@@ -396,21 +369,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
     public int deleteEventData(EventData event) throws ElasticSearchLoadException {
         String indexName = event.getSchemaName();
         String typeName = event.getTableName();
-        //文档的ID
-        String docId = "";
-        Map<String, Object> keyMap = new HashMap<String, Object>(event.getKeys().size());
-        for (int j = 0, len3 = event.getKeys().size(); j < len3; j++) {
-            EventColumn eventColumn = event.getKeys().get(j);
-            docId += eventColumn.getColumnValue();
-            docId += "#";
-            keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
-        }
-        // SHA-1得到唯一ID
-        if (event.getKeys().size() == 1) {
-            docId = docId.substring(0, docId.length() - 1);
-        } else if (event.getKeys().size() > 1) {
-            docId = encode(ALGORITHM, docId.substring(0, docId.length() - 1));
-        }
+        String docId = getDocId(event);
         String esParent = null;
         for (int j = 0, len = event.getColumns().size(); j < len; j++) {
             EventColumn eventColumn = event.getColumns().get(j);
@@ -419,7 +378,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                 break;
             }
         }
-        JestResult jestResult = this.JestTemplate.deleteDoc(indexName, typeName, docId, esParent);
+        JestResult jestResult = this.jestTemplate.deleteDoc(indexName, typeName, docId, esParent);
         if (jestResult == null) {
             throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
         }
@@ -456,7 +415,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
      */
     @Override
     public boolean eraseTable(EventData event) throws ElasticSearchLoadException {
-        return this.JestTemplate.deleteType(event.getSchemaName(), event.getTableName());
+        return this.jestTemplate.deleteType(event.getSchemaName(), event.getTableName());
     }
 
     /**
@@ -468,7 +427,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
      */
     @Override
     public boolean truncateTable(EventData event) throws ElasticSearchLoadException {
-        return this.JestTemplate.clearType(event.getSchemaName(), event.getTableName());
+        return this.jestTemplate.clearType(event.getSchemaName(), event.getTableName());
     }
 
     @Override
@@ -477,7 +436,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
     }
 
 
-    private Object columnValueTransform(EventColumn eventColumn) {
+    private static Object columnValueTransform(EventColumn eventColumn) {
         switch (eventColumn.getColumnType()) {
             case 4://int
                 return Integer.valueOf(eventColumn.getColumnValue());
@@ -499,41 +458,92 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
         }
     }
 
-    /**
-     * encode string
-     *
-     * @param algorithm
-     * @param str
-     * @return String
-     */
-    private static String encode(String algorithm, String str) {
-        if (str == null) {
-            return null;
+    private static String getOldDocId(EventData eventData) {
+        // update操作才会关注old 文档id
+        String oldDocId = "";
+        for (int j = 0, len2 = eventData.getOldKeys().size(); j < len2; j++) {
+            EventColumn eventColumn = eventData.getOldKeys().get(j);
+            oldDocId += eventColumn.getColumnValue();
+            oldDocId += "#";
         }
-        try {
-            MessageDigest messageDigest = MessageDigest.getInstance(algorithm);
-            messageDigest.update(str.getBytes());
-            return getFormattedText(messageDigest.digest());
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+        // SHA-1得到唯一ID
+        if (eventData.getOldKeys().size() == 1) {
+            oldDocId = oldDocId.substring(0, oldDocId.length() - 1);
+        } else if (eventData.getOldKeys().size() > 1) {
+            oldDocId = IdUtil.encode(ALGORITHM, oldDocId.substring(0, oldDocId.length() - 1));
         }
-
+        return oldDocId;
     }
 
-    /**
-     * Takes the raw bytes from the digest and formats them correct.
-     *
-     * @param bytes the raw bytes from the digest.
-     * @return the formatted bytes.
-     */
-    private static String getFormattedText(byte[] bytes) {
-        int len = bytes.length;
-        StringBuilder buf = new StringBuilder(len * 2);
-        // 把密文转换成十六进制的字符串形式
-        for (int j = 0; j < len; j++) {
-            buf.append(HEX_DIGITS[(bytes[j] >> 4) & 0x0f]);
-            buf.append(HEX_DIGITS[bytes[j] & 0x0f]);
+    private static String getDocId(EventData eventData) {
+        //文档的ID
+        String docId = "";
+        for (int j = 0, len3 = eventData.getKeys().size(); j < len3; j++) {
+            EventColumn eventColumn = eventData.getKeys().get(j);
+            docId += eventColumn.getColumnValue();
+            docId += "#";
         }
-        return buf.toString();
+        // SHA-1得到唯一ID
+        if (eventData.getKeys().size() == 1) {// 单个主键无需hash处理
+            docId = docId.substring(0, docId.length() - 1);
+        } else if (eventData.getKeys().size() > 1) {
+            docId = IdUtil.encode(ALGORITHM, docId.substring(0, docId.length() - 1));
+        }
+        return docId;
+    }
+
+    private static Map<String, Object> getDocContent(EventData eventData) {
+        Map<String, Object> keyMap = new HashMap<String, Object>(eventData.getKeys().size());
+        for (int j = 0, len3 = eventData.getKeys().size(); j < len3; j++) {
+            EventColumn eventColumn = eventData.getKeys().get(j);
+            keyMap.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
+        }
+        //文档的内容
+        final Map<String, Object> docContent = new HashMap<String, Object>();
+        for (int j = 0, len4 = eventData.getColumns().size(); j < len4; j++) {
+            EventColumn eventColumn = eventData.getColumns().get(j);
+            docContent.put(eventColumn.getColumnName(), columnValueTransform(eventColumn));
+        }
+        docContent.putAll(keyMap);
+        return docContent;
+    }
+
+
+    private List<Integer> bulkToElasticSearch(List<BulkableAction> actions, List<EventData> events, List<Pair> sharedDeleteList) {
+        List<Integer> bulkResult = new ArrayList<Integer>(
+                Collections.nCopies(events.size(), new Integer(0)));
+        //bulk操作
+        long bulkStartTime = System.currentTimeMillis();
+        BulkResult result = this.jestTemplate.bulkOperationDoc(actions);
+        logger.info("The bulk request spend {} ms", System.currentTimeMillis() - bulkStartTime);
+        // bulk请求发生 IOException，如网络中断
+        if (result == null) {
+            // return bulkResult; 这样的话不会进行重试了，会漏数据
+            throw new ElasticSearchLoadException(null, "Bulk operation happen IO exception. So temporality can't connect to ES.");
+        }
+        if (result.getFailedItems().size() > 0) {// 部分失败了
+            throw new ElasticSearchLoadException(JSON.toJSONString(result.getFailedItems()), "ES bulk partial fail.");
+        }
+        //结果处理
+        for (int i = 0, len = result.getItems().size(); i < len; i++) {
+            BulkResult.BulkResultItem itemResult = result.getItems().get(i);
+            if (StringUtils.isBlank(itemResult.error)) {//成功
+                if (sharedDeleteList.get(i) != null) {// 业务上主键变更不可能很频繁；不能使用异步请求ES，效率较低
+                    String indexName = events.get(i).getSchemaName();
+                    String typeName = events.get(i).getTableName();
+                    JestResult deleteResult = jestTemplate.deleteDoc(indexName, typeName, (String) sharedDeleteList.get(i).getKey(), (String) sharedDeleteList.get(i).getValue());
+                    // 发生IO Exception时，响应结果deleteResult为null
+                    bulkResult.set(i, deleteResult != null && deleteResult.isSucceeded() ? 1 : 0);
+                } else {
+                    bulkResult.set(i, 1);
+                }
+            } /*else {//失败
+                // 打印错误日志，以便数据丢失时方便排查问题
+                logger.error("## Load ElasticSearch error , [operation={}, index={}, type={}, id={}, errorInfo={}]",
+                        new Object[] { itemResult.operation, itemResult.index, itemResult.type,itemResult.id,itemResult.error });
+                bulkResult.set(i, 0);
+            }*/
+        }
+        return bulkResult;
     }
 }
