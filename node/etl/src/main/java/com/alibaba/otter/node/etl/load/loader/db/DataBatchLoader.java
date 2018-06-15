@@ -195,6 +195,8 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
                         // dbLoadAction是一个pool池化对象
                         DbLoadAction dbLoadAction = (DbLoadAction) beanFactory.getBean("dbLoadAction",
                                                                                        DbLoadAction.class);
+                        // TODO: 2018/6/10 动态根据目的数据源确定batchSize大小，MySQL为50，ElasticSearch为1000 
+                        dbLoadAction.batchSizeByLoadTargetSource(rowBatch);
                         return dbLoadAction.load(rowBatch, controller);
                     } finally {
                         MDC.remove(OtterConstants.splitPipelineLogFileKey);

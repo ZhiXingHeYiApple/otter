@@ -221,6 +221,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
 
     @Override
     public List<Integer> batchEventDatas(List<EventData> events) throws ElasticSearchLoadException {
+        System.out.println("###batchEventDatas" + events.size() + "###" + JSON.toJSONString(events));
         CompletionService<Pair<Integer, BulkableAction>> completionService = new ExecutorCompletionService<Pair<Integer, BulkableAction>>(executor);
 
         // 主键发生改变的部分文档更新需要删除老文档，多线程共享的集合
@@ -288,6 +289,7 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                 docAsUpsertModel.setDocAsUpsert(true);
                 docAsUpsertModel.setDoc(docContent);
                 String partialDocStr = JSON.toJSONString(docAsUpsertModel);
+                // 注意：列模式时，esParent对应的字段不修改的话在EventData中会缺失，无法支持父子文档，目前没有好的解决方式，建议使用ROW方式吧
                 JestResult jestResult = this.jestTemplate.updateDoc(indexName, typeName, docId, esParent, partialDocStr);
                 if (jestResult == null) {
                     throw new ElasticSearchLoadException(null, "Can't connect to ES. Please check the config of connection");
@@ -521,8 +523,11 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
             // return bulkResult; 这样的话不会进行重试了，会漏数据
             throw new ElasticSearchLoadException(null, "Bulk operation happen IO exception. So temporality can't connect to ES.");
         }
-        if (result.getFailedItems().size() > 0) {// 部分失败了
-            throw new ElasticSearchLoadException(JSON.toJSONString(result.getFailedItems()), "ES bulk partial fail.");
+        // HTTP层面的错误时，例如发生json格式异常时，result.getFailedItems().size()为零,部分文档失败时，result.getFailedItems().size()才会大于0
+        if (!StringUtils.isBlank(result.getErrorMessage())) {
+            // json格式异常
+            // 部分失败了 One or more of the items in the Bulk request failed, check BulkResult.getItems() for more information.
+            throw new ElasticSearchLoadException(JSON.toJSONString(result.getFailedItems()), result.getErrorMessage());
         }
         //结果处理
         for (int i = 0, len = result.getItems().size(); i < len; i++) {
@@ -533,7 +538,14 @@ public class ElasticSearchTemplate implements NoSqlTemplate {
                     String typeName = events.get(i).getTableName();
                     JestResult deleteResult = jestTemplate.deleteDoc(indexName, typeName, (String) sharedDeleteList.get(i).getKey(), (String) sharedDeleteList.get(i).getValue());
                     // 发生IO Exception时，响应结果deleteResult为null
-                    bulkResult.set(i, deleteResult != null && deleteResult.isSucceeded() ? 1 : 0);
+                    if (deleteResult != null && deleteResult.isSucceeded()) {
+                        bulkResult.set(i, 1);
+                    } else {
+                        // 日志记录
+//                        logger.error("## Delete old document fail when primary key changed, [operation={}, index={}, type={}, _id={},_parent={}, errorInfo={}]",
+//                                new Object[]{itemResult.operation, itemResult.index, itemResult.type, itemResult.id, sharedDeleteList.get(i).getValue(), itemResult.error});
+                        throw new ElasticSearchLoadException(JSON.toJSONString(itemResult), "Delete old document [" + sharedDeleteList.get(i).getKey() + ", " + sharedDeleteList.get(i).getValue() + "] fail when primary key changed");
+                    }
                 } else {
                     bulkResult.set(i, 1);
                 }

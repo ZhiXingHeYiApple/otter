@@ -32,6 +32,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import com.alibaba.fastjson.JSON;
 import com.alibaba.otter.node.etl.common.db.dialect.NoSqlTemplate;
 import com.alibaba.otter.node.etl.load.exception.ElasticSearchLoadException;
 import org.apache.commons.lang.StringUtils;
@@ -159,9 +160,10 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                     List<EventData> items = buckets.getItems(weight);
                     logger.debug("##start load for weight:" + weight);
                     // 预处理下数据
-
+                    //System.out.println("IUD合并之前(" + items.size() + ")：" + JSON.toJSONString(items));
                     // 进行一次数据合并，合并相同pk的多次I/U/D操作
                     items = DbLoadMerger.merge(items);
+                    //System.out.println("IUD合并之后(" + items.size() + ")：" + JSON.toJSONString(items));
                     // 按I/U/D进行归并处理
                     DbLoadData loadData = new DbLoadData();
                     doBefore(items, context, loadData);
@@ -407,7 +409,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
         // 预处理下数据
         List<Future<Exception>> results = new ArrayList<Future<Exception>>();
         for (List<EventData> rows : totalRows) {
-            if (CollectionUtils.isEmpty(rows)) {
+            if (CollectionUtils.isEmpty(rows)) {// 通过查看代码，rows根本不可能为空
                 continue; // 过滤空记录
             }
 
@@ -546,10 +548,6 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
             DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), data.getTableId());
             dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
                     (DbMediaSource) dataMedia.getSource());
-            // TODO: 2018/5/17 对于MySQL，batchSize=50太小了，ES的bulk请求大小通常设为1000~3000，请求大小控制在5MB左右
-            if (dbDialect.isNoSqlDB()) {
-                batchSize = 400;
-            }
 
         }
 
@@ -956,4 +954,18 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
         this.useBatch = useBatch;
     }
 
+    public void batchSizeByLoadTargetSource(RowBatch rowBatch) {
+        Identity identity = rowBatch.getIdentity();
+        DbLoadContext context = buildContext(identity);
+        if (!rowBatch.getDatas().isEmpty()) {
+            EventData data = rowBatch.getDatas().get(0); // eventData为同一数据库的记录，只取第一条即可
+            DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), data.getTableId());
+            DbDialect dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
+                    (DbMediaSource) dataMedia.getSource());
+            // TODO: 2018/5/17 对于MySQL，batchSize=50太小了，ES的bulk请求大小通常设为1000~3000，请求大小控制在5MB左右
+            if (dbDialect.isNoSqlDB()) {
+                batchSize = 1000;
+            }
+        }
+    }
 }
