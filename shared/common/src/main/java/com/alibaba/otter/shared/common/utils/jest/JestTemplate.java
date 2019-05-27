@@ -25,11 +25,24 @@ import io.searchbox.indices.aliases.AliasExists;
 import io.searchbox.indices.mapping.GetMapping;
 import io.searchbox.params.Parameters;
 import org.apache.commons.lang.StringUtils;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.conn.ssl.TrustStrategy;
+import org.apache.http.nio.conn.SchemeIOSessionStrategy;
+import org.apache.http.nio.conn.ssl.SSLIOSessionStrategy;
+import org.apache.http.ssl.SSLContextBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
+import java.security.KeyManagementException;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -46,20 +59,51 @@ public class JestTemplate implements ElasticSearchDAO {
         JestClientFactory factory = new JestClientFactory();
         //根据外部传进来的url构建elasticsearch客户端
         String connectionUrl = mediaSource.getUrl();
+        if (null != mediaSource.getUsername() && null != mediaSource.getPassword()) {
+            // trust ALL certificates
+            SSLContext sslContext = null;
+            try {
+                sslContext = new SSLContextBuilder().loadTrustMaterial(null, new TrustStrategy() {
+                    @Override
+                    public boolean isTrusted(X509Certificate[] x509Certificates, String s) throws CertificateException {
+                        return true;
+                    }
+                }).build();
+            } catch (NoSuchAlgorithmException e) {
+                e.printStackTrace();
+            } catch (KeyManagementException e) {
+                e.printStackTrace();
+            } catch (KeyStoreException e) {
+                e.printStackTrace();
+            }
 
-        factory.setHttpClientConfig(new HttpClientConfig
-                .Builder(connectionUrl)
-                .multiThreaded(true)
-                //enable host discovery
-                .discoveryEnabled(true)
-                .discoveryFrequency(1L, TimeUnit.MINUTES)
-                //Per default this implementation will create no more than 2 concurrent connections per given route
-                .defaultMaxTotalConnectionPerRoute(2)
-                // and no more 20 connections in total
-                .maxTotalConnection(20)
-                .connTimeout(10000)
-                .readTimeout(10000)
-                .build());
+            // skip hostname checks
+            HostnameVerifier hostnameVerifier = NoopHostnameVerifier.INSTANCE;
+
+            SSLConnectionSocketFactory sslSocketFactory = new SSLConnectionSocketFactory(sslContext, hostnameVerifier);
+            SchemeIOSessionStrategy httpsIOSessionStrategy = new SSLIOSessionStrategy(sslContext, hostnameVerifier);
+            factory.setHttpClientConfig(new HttpClientConfig.Builder(connectionUrl)
+                    .defaultSchemeForDiscoveredNodes("https") // required, otherwise uses http
+                    .sslSocketFactory(sslSocketFactory) // this only affects sync calls
+                    .defaultCredentials(mediaSource.getUsername(), mediaSource.getPassword())  //credential不对的话会返回401 Unauthorized
+                    .httpsIOSessionStrategy(httpsIOSessionStrategy) // this only affects async calls
+                    .build()
+            );
+        } else {
+            factory.setHttpClientConfig(new HttpClientConfig
+                    .Builder(connectionUrl)
+                    .multiThreaded(true)
+                    //enable host discovery
+                    .discoveryEnabled(true)
+                    .discoveryFrequency(1L, TimeUnit.MINUTES)
+                    //Per default this implementation will create no more than 2 concurrent connections per given route
+                    .defaultMaxTotalConnectionPerRoute(2)
+                    // and no more 20 connections in total
+                    .maxTotalConnection(20)
+                    .connTimeout(10000)
+                    .readTimeout(10000)
+                    .build());
+        }
         this.jestClient = factory.getObject();
     }
 
@@ -159,7 +203,7 @@ public class JestTemplate implements ElasticSearchDAO {
     }
 
     @Override
-    public JestResult updateDoc(String index, String type, String id,String esParent, String partialDoc) {
+    public JestResult updateDoc(String index, String type, String id, String esParent, String partialDoc) {
         JestResult result = null;
         try {
             Update.Builder updateBuilder = new Update.Builder(partialDoc).index(index).type(type).id(id);
@@ -275,7 +319,7 @@ public class JestTemplate implements ElasticSearchDAO {
     }
 
     @Override
-    public JestResult getForDoc(String indexName, String typeName, String id, String routing){
+    public JestResult getForDoc(String indexName, String typeName, String id, String routing) {
         Get.Builder getBuilder = new Get.Builder(indexName, id).type(typeName);
         if (org.springframework.util.StringUtils.hasText(routing)) {
             getBuilder.setParameter(Parameters.ROUTING, routing);
